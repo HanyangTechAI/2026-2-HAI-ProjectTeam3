@@ -1,0 +1,27 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Dataset images, labels, split manifests and reports stay outside Git.
+/data/*
+!/data/README.md
+outputs/
+models/
+*.onnx
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.h5
+*.tflite
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.tar.xz
+*.7z
+.env
+.env.*
+!.env.example
+*credentials*.json

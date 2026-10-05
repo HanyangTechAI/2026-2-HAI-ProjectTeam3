@@ -1,0 +1,3 @@
+# Optional full SDK for GPU servers with a working C++ build toolchain.
+-r requirements.txt
+insightface==0.7.3
