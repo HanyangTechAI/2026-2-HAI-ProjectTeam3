@@ -1,0 +1,16 @@
+{
+  "base_model": "models/generation/realistic-vision-v5.1",
+  "image_encoder": "models/generation/clip-vit-h-14",
+  "ip_adapter": "models/generation/ip-adapter-faceid-plusv2_sd15.bin",
+  "faceid_lora": "",
+  "age_lora": "models/generation/age_lora.safetensors",
+  "model_root": "models/insightface",
+  "device": "cuda",
+  "seed": 42,
+  "strength": 0.6,
+  "steps": 25,
+  "guidance_scale": 7.5,
+  "ip_scale": 0.8,
+  "faceid_lora_scale": 1.0,
+  "age_lora_scale": 1.0
+}
