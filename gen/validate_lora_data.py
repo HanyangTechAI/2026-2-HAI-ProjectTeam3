@@ -12,6 +12,9 @@ from .pipeline import AGE_PHRASES, age_prompt
 EXPECTED_COUNTS = {'train': 8163, 'val': 400, 'test': 100}
 CAPTIONS = {age_prompt(upper, gender): (upper, gender)
             for upper, _ in AGE_PHRASES for gender in ('male', 'female')}
+# The original prepared dataset is immutable; recognize its documented old labels.
+LEGACY_CAPTIONS = {'a photo of a elderly man in his 70s': age_prompt(100, 'male'),
+                   'a photo of a elderly woman in her 70s': age_prompt(100, 'female')}
 
 
 def validate_dataset(root, expected_counts=None):
@@ -27,7 +30,7 @@ def validate_dataset(root, expected_counts=None):
         images, metadata = directory / 'images', directory / 'metadata.jsonl'
         stats = dict(images_exists=images.is_dir(), metadata_exists=metadata.is_file(),
                      image_count=0, metadata_rows=0, valid_images=0, valid_references=0,
-                     nonempty_captions=0)
+                      nonempty_captions=0, legacy_caption_rows=0)
         splits[split] = stats
         if not images.is_dir():
             issue(split, 'missing_images_directory', images)
@@ -52,8 +55,9 @@ def validate_dataset(root, expected_counts=None):
                         issue(split, 'empty_caption', line_number)
                     else:
                         stats['nonempty_captions'] += 1
-                        caption_counts[caption] += 1
-                        if caption not in CAPTIONS:
+                        caption_counts[LEGACY_CAPTIONS.get(caption, caption)] += 1
+                        stats['legacy_caption_rows'] += int(caption in LEGACY_CAPTIONS)
+                        if caption not in CAPTIONS and caption not in LEGACY_CAPTIONS:
                             issue(split, 'noncanonical_caption', line_number)
                     name = row.get('file_name')
                     if not isinstance(name, str) or not name or Path(name).is_absolute():
@@ -114,7 +118,7 @@ def validate_dataset(root, expected_counts=None):
                 identity_disjoint_verified=False,
                 limitations=['File hashes/IDs do not establish person-disjoint splits.',
                              'Youth and oldest training groups are undersampled.',
-                             'Age captions describe groups, not exact ages; 70+ is phrased as 70s.'])
+                             'Age captions describe groups, not exact ages; original 70s captions are legacy labels.'])
 
 
 def validate_provenance(report, manifest, project_root):

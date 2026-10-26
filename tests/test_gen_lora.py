@@ -8,7 +8,8 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from gen.train_lora import SOURCE_PATCHES, patched_source, run_training, training_arguments
+from gen.train_lora import SOURCE_PATCHES, epoch_loader, patched_source, run_training, training_arguments, verify_checkpoint
+from gen.prepare_lora_stages import prepare
 from gen.validate_lora_data import validate_dataset, validate_provenance
 
 
@@ -32,6 +33,39 @@ class LoRADataContracts(unittest.TestCase):
         self.assertFalse(report['identity_disjoint_verified'])
         self.assertEqual(report['corrections'], [])
         self.assertEqual(len(report['groups']), 60)
+
+    def test_original_70s_caption_remains_valid_with_visible_warning(self):
+        metadata = self.root / 'train/metadata.jsonl'
+        metadata.write_text(json.dumps({'file_name': 'images/0.png',
+                                       'text': 'a photo of a elderly man in his 70s'}) + '\n')
+        report = validate_dataset(self.root)
+        self.assertTrue(report['valid'])
+        self.assertEqual(report['splits']['train']['legacy_caption_rows'], 1)
+
+    def test_preparation_copies_images_and_preserves_original_labels(self):
+        source, previous, output = self.root / 'train', self.root / 'previous', self.root / 'stages'
+        caption = 'a photo of a elderly man in his 70s'
+        metadata = source / 'metadata.jsonl'
+        metadata.write_text(json.dumps({'file_name': 'images/0.png', 'text': caption}) + '\n')
+        original = metadata.read_bytes()
+        provenance = self.root / 'provenance.jsonl'
+        provenance.write_text(json.dumps(dict(path='train/images/0.png', split='train', caption=caption,
+                              sha256=hashlib.sha256((source / 'images/0.png').read_bytes()).hexdigest(),
+                              age_group='70-120', gender='male')) + '\n')
+        for name, steps in [('initial', 10), ('resume-12', 2)]:
+            (previous / name).mkdir(parents=True)
+            (previous / name / 'summary.json').write_text(json.dumps({'applied_steps': steps, 'elapsed_seconds': 20}))
+        (previous / 'initial/train.log').write_text('10/10 [00:17<00:00]')
+        config = Path(__file__).resolve().parents[1] / 'gen/lora.smoke.json'
+        result = prepare(source, provenance, previous, output, config)
+        self.assertEqual(result['changed_captions'], 1)
+        self.assertEqual(metadata.read_bytes(), original)
+        self.assertIn('70 or older', (output / 'data/train/metadata.jsonl').read_text())
+        self.assertNotEqual((source / 'images/0.png').stat().st_ino,
+                            (output / 'data/train/images/0.png').stat().st_ino)
+        self.assertFalse((output / 'data/val').exists())
+        with self.assertRaises(FileExistsError):
+            prepare(source, provenance, previous, output, config)
 
     def test_missing_caption_image_and_malformed_row_are_reported(self):
         metadata = self.root / 'train/metadata.jsonl'
@@ -93,15 +127,42 @@ class LoRADataContracts(unittest.TestCase):
 
 
 class LoRARunnerContracts(unittest.TestCase):
-    def test_pinned_source_and_two_explicit_patches(self):
+    def test_pinned_source_and_explicit_patches(self):
         source = '\n'.join(SOURCE_PATCHES).encode()
         with self.assertRaisesRegex(ValueError, 'SHA-256'):
             patched_source(source)
         with patch('gen.train_lora.SCRIPT_SHA256', hashlib.sha256(source).hexdigest()):
             result = patched_source(source)
         for before, after in SOURCE_PATCHES.items():
-            self.assertNotIn(before, result)
+            if before not in after:
+                self.assertNotIn(before, result)
             self.assertIn(after, result)
+
+    def test_resume_skips_consumed_batches_with_reproducible_order(self):
+        import torch
+        from accelerate import Accelerator, DataLoaderConfiguration
+        accelerator = Accelerator(cpu=True, gradient_accumulation_steps=4,
+                                  dataloader_config=DataLoaderConfiguration(use_seedable_sampler=True, data_seed=42))
+        loader = accelerator.prepare(torch.utils.data.DataLoader(list(range(84)), batch_size=1, shuffle=True))
+        uninterrupted, _ = epoch_loader(accelerator, loader, 0, 0, 0, 21)
+        expected = [int(batch[0]) for batch in uninterrupted]
+        resumed, skipped = epoch_loader(accelerator, loader, 0, 0, 10, 21)
+        self.assertEqual(skipped, 40)
+        self.assertEqual([int(batch[0]) for batch in resumed], expected[40:])
+        next_epoch, skipped = epoch_loader(accelerator, loader, 1, 0, 10, 21)
+        self.assertEqual(skipped, 0)
+        self.assertNotEqual([int(batch[0]) for batch in next_epoch], expected)
+
+    def test_checkpoint_corruption_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertIsNone(verify_checkpoint(root))
+            (root / 'weights').write_bytes(b'valid')
+            (root / 'integrity.json').write_text(json.dumps({'files': {'weights': hashlib.sha256(b'valid').hexdigest()}}))
+            self.assertIsNotNone(verify_checkpoint(root))
+            (root / 'weights').write_bytes(b'corrupt')
+            with self.assertRaisesRegex(ValueError, 'integrity mismatch'):
+                verify_checkpoint(root)
 
     def test_official_arguments_train_only_and_resume_guards(self):
         with tempfile.TemporaryDirectory() as directory:

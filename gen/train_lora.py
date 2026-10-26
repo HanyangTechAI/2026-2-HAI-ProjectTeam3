@@ -34,6 +34,12 @@ SOURCE_PATCHES = {
         'lora_layers = [p for p in unet.parameters() if p.requires_grad]',
     'unet = unet.to(torch.float32)':
         'unet = unet.to(device="cpu", dtype=torch.float32)',
+    'for step, batch in enumerate(train_dataloader):':
+        'for step, batch in enumerate(accelerator.epoch_loader(\n'
+        '            train_dataloader, epoch, first_epoch, initial_global_step, num_update_steps_per_epoch)):',
+    'logger.info(f"Saved state to {save_path}")':
+        'accelerator.audit_checkpoint(save_path)\n'
+        '                        logger.info(f"Saved state to {save_path}")',
 }
 ALLOWED = set(('pretrained_model_name_or_path train_data_dir image_column caption_column resolution '
                'center_crop random_flip rank train_batch_size gradient_accumulation_steps '
@@ -52,6 +58,27 @@ def patched_source(source):
             raise ValueError(f'Expected exactly one upstream patch site: {before}')
         text = text.replace(before, after)
     return text
+
+
+def epoch_loader(accelerator, loader, epoch, first_epoch, initial_step, updates_per_epoch):
+    """Restore sample order without replaying already consumed microbatches."""
+    skip = (initial_step % updates_per_epoch) * accelerator.gradient_accumulation_steps if epoch == first_epoch else 0
+    active = accelerator.skip_first_batches(loader, skip) if skip else loader
+    active.set_epoch(epoch)
+    return active, skip
+
+
+def verify_checkpoint(directory):
+    directory = Path(directory)
+    manifest = directory / 'integrity.json'
+    if not manifest.exists():
+        return None  # Historical smoke checkpoints predate the integrity manifest.
+    record = json.loads(manifest.read_text())
+    for name, digest in record['files'].items():
+        path = directory / name
+        if Path(name).name != name or not path.is_file() or sha256(path) != digest:
+            raise ValueError(f'Checkpoint integrity mismatch: {name}')
+    return record
 
 
 def training_arguments(config, output, resume=None):
@@ -153,7 +180,7 @@ def run_training(config, output, script, resume=None):
         old_argv = sys.argv
         try:
             import torch
-            from accelerate import Accelerator
+            from accelerate import Accelerator, DataLoaderConfiguration
             import datasets
             from diffusers import StableDiffusionPipeline
             from diffusers.utils import convert_state_dict_to_diffusers
@@ -188,12 +215,15 @@ def run_training(config, output, script, resume=None):
                     # The official CLI accepts strings; Accelerate requires Python None.
                     if kwargs.get('log_with') == 'none':
                         kwargs['log_with'] = None
+                    kwargs['dataloader_config'] = DataLoaderConfiguration(use_seedable_sampler=True, data_seed=config['seed'])
                     super().__init__(*args, **kwargs)
+                    self.last_step_at = None
                     if self.device.type != 'cuda' or self.num_processes != 1:
                         raise RuntimeError('Accelerator must select one CUDA device, not CPU/distributed execution')
 
                 def prepare(self, *objects, **kwargs):
                     unet, optimizer, loader, scheduler = super().prepare(*objects, **kwargs)
+                    self.audited_scheduler = scheduler
                     self.parameters_to_audit = {n: p for n, p in unet.named_parameters() if p.requires_grad}
                     if not self.parameters_to_audit or any('lora_' not in n for n in self.parameters_to_audit):
                         raise RuntimeError('Only UNet LoRA parameters may be trained')
@@ -215,10 +245,33 @@ def run_training(config, output, script, resume=None):
                     return unet, optimizer, loader, scheduler
 
                 def load_state(self, *args, **kwargs):
+                    integrity = verify_checkpoint(args[0])
+                    if integrity and (integrity['metadata_sha256'] != report['metadata_sha256'] or
+                                      integrity['base_files'] != report['base_files']):
+                        raise ValueError('Checkpoint model/data fingerprints differ from current run')
                     result = super().load_state(*args, **kwargs)
                     self.initial_weights = {n: p.detach().cpu().clone() for n, p in self.parameters_to_audit.items()}
                     report['checkpoint_reloaded'] = True
+                    report['resume_integrity_verified'] = integrity is not None
+                    report['legacy_sampler_order_unverified'] = integrity is None
                     return result
+
+                def epoch_loader(self, loader, epoch, first_epoch, initial_step, updates_per_epoch):
+                    active, skip = epoch_loader(self, loader, epoch, first_epoch, initial_step, updates_per_epoch)
+                    report['resume_skipped_microbatches'] = skip
+                    report['sampler_policy'] = 'SeedableRandomSampler(seed) + set_epoch + skip_first_batches'
+                    if self.last_step_at is None:
+                        torch.cuda.synchronize()
+                        self.last_step_at = time.perf_counter()
+                        report['training_started_seconds'] = self.last_step_at - started
+                    return active
+
+                def audit_checkpoint(self, directory):
+                    directory = Path(directory)
+                    files = {p.name: sha256(p) for p in sorted(directory.iterdir()) if p.is_file()}
+                    save_json(directory / 'integrity.json', dict(files=files,
+                              metadata_sha256=report['metadata_sha256'], base_files=report['base_files'],
+                              step=report['completed_global_step'], sampler_policy=report['sampler_policy']))
 
                 def backward(self, loss, **kwargs):
                     if not torch.isfinite(loss):
@@ -237,11 +290,17 @@ def run_training(config, output, script, resume=None):
 
                 def log(self, values, step=None, **kwargs):
                     if 'train_loss' in values:
+                        torch.cuda.synchronize()
+                        now = time.perf_counter()
                         skipped = self.optimizer_step_was_skipped
                         delta = max(float((p.detach().cpu() - self.initial_weights[n]).abs().max())
                                     for n, p in self.parameters_to_audit.items())
                         row = dict(step=step, loss=values['train_loss'], grad_norm=self.last_grad_norm,
-                                   optimizer_step_skipped=skipped, lora_max_abs_delta=delta,
+                                    learning_rate=float(self.audited_scheduler.get_last_lr()[0]),
+                                    step_seconds=now - self.last_step_at, elapsed_seconds=now - started,
+                                    optimizer_step_skipped=skipped, lora_max_abs_delta=delta,
+                                    allocated_mib=torch.cuda.memory_allocated() / 2**20,
+                                    reserved_mib=torch.cuda.memory_reserved() / 2**20,
                                    peak_allocated_mib=torch.cuda.max_memory_allocated() / 2**20,
                                    peak_reserved_mib=torch.cuda.max_memory_reserved() / 2**20)
                         with (run / 'metrics.jsonl').open('a') as stream:
@@ -250,6 +309,8 @@ def run_training(config, output, script, resume=None):
                         report['completed_global_step'] = step
                         report['applied_steps'] += int(not skipped)
                         report['lora_max_abs_delta'] = delta
+                        report['training_step_seconds'] = report.get('training_step_seconds', 0) + row['step_seconds']
+                        self.last_step_at = now
                         if skipped or delta <= 0 or not math.isfinite(values['train_loss']):
                             raise RuntimeError('Optimizer did not apply a finite LoRA update')
                     return super().log(values, step=step, **kwargs)
@@ -313,7 +374,9 @@ def run_training(config, output, script, resume=None):
                               peak_reserved_mib=torch.cuda.max_memory_reserved() / 2**20)
             report.update(elapsed_seconds=time.perf_counter() - started,
                           device_peak_sampled_mib=max((s['used_mib'] for s in samples), default=None),
-                          memory_note='CUDA allocator peak includes training/save; nvidia-smi is sampled every 0.5s and includes other applications.')
+                           memory_note='CUDA allocator peak includes training/save; nvidia-smi is sampled every 0.5s and includes other applications.')
+            report['step_timing_note'] = ('CUDA-synchronized consecutive update intervals include data loading, audit, '
+                                          'and any preceding checkpoint save; startup and final save/reload are separate.')
             write_csv(run / 'gpu.csv', samples, fields=['seconds', 'used_mib', 'total_mib'])
             save_json(run / 'summary.json', report)
             print(json.dumps({k: v for k, v in report.items() if k not in ('base_files', 'traceback')}, indent=2))

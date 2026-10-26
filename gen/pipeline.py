@@ -1,4 +1,4 @@
-"""Local SD1.5 img2img + FaceID Plus v2 + optional Age LoRA.
+"""Local SD1.5 face-only inpainting + FaceID Plus v2 + optional Age LoRA.
 
 Real loading/inference needs external weights and is not validated by mock tests.
 Instances are reused sequentially, not shared across concurrent requests.
@@ -27,7 +27,7 @@ AGE_PHRASES = (
     (39, ('man in his 30s', 'woman in her 30s', 'person in their 30s')),
     (49, ('man in his 40s', 'woman in her 40s', 'person in their 40s')),
     (69, ('middle-aged man in his 50s or 60s', 'middle-aged woman in her 50s or 60s', 'middle-aged person')),
-    (100, ('elderly man in his 70s', 'elderly woman in her 70s', 'elderly person')),
+    (100, ('elderly man aged 70 or older', 'elderly woman aged 70 or older', 'elderly person aged 70 or older')),
 )
 
 
@@ -82,6 +82,7 @@ class PipelineConfig:
     ip_scale: float = 0.8
     faceid_lora_scale: float = 1.0
     age_lora_scale: float = 1.0
+    preserve_background: bool = True
 
     def __post_init__(self):
         if self.device not in ('cpu', 'cuda'):
@@ -96,6 +97,8 @@ class PipelineConfig:
             raise ValueError('This FaceID integration requires guidance_scale > 1 (CFG)')
         if any(not math.isfinite(v) or v < 0 for v in (self.ip_scale, self.faceid_lora_scale, self.age_lora_scale)):
             raise ValueError('adapter scales must be finite and nonnegative')
+        if not isinstance(self.preserve_background, bool):
+            raise ValueError('preserve_background must be a boolean')
 
 
 class AgeShiftPipeline:
@@ -123,7 +126,7 @@ class AgeShiftPipeline:
                 raise ModelUnavailableError(f'Missing {name}: {value or "not configured"}. No mock fallback.')
         try:
             import torch
-            from diffusers import DPMSolverMultistepScheduler, StableDiffusionImg2ImgPipeline
+            from diffusers import DPMSolverMultistepScheduler, StableDiffusionImg2ImgPipeline, StableDiffusionInpaintPipeline
             from .faces import FaceTools
 
             if cfg.device == 'cuda' and not torch.cuda.is_available():
@@ -137,7 +140,10 @@ class AgeShiftPipeline:
                     cfg.image_encoder, torch_dtype=dtype, local_files_only=True)
                 kwargs['feature_extractor'] = CLIPImageProcessor.from_pretrained(
                     cfg.image_encoder, local_files_only=True)
-            pipe = StableDiffusionImg2ImgPipeline.from_pretrained(cfg.base_model, **kwargs)
+            # The pinned Diffusers inpaint pipeline supports the existing 4-channel
+            # UNet and restores unmasked latents at each denoising step.
+            pipeline_class = StableDiffusionInpaintPipeline if cfg.preserve_background else StableDiffusionImg2ImgPipeline
+            pipe = pipeline_class.from_pretrained(cfg.base_model, **kwargs)
             pipe.scheduler = DPMSolverMultistepScheduler.from_config(
                 pipe.scheduler.config, algorithm_type='dpmsolver++', solver_order=2, use_karras_sigmas=True)
             if self.mode != 'prompt_only':
@@ -189,13 +195,22 @@ class AgeShiftPipeline:
         self.load()
         try:
             import torch
-            crop, detected_gender = self._faces.prepare(image)
-            gender = detected_gender if gender == 'unknown' else gender
             cfg, pipe = self.config, self._pipe
+            edit = self._faces.prepare_edit(image) if cfg.preserve_background else None
+            if edit is not None:
+                crop = edit.crop
+                detected_gender = 'male' if edit.face.gender == 1 else 'female'
+            else:
+                crop, detected_gender = self._faces.prepare(image)
+            gender = detected_gender if gender == 'unknown' else gender
             conditioning = {}
+            if edit is not None:
+                conditioning.update(mask_image=edit.mask,
+                                    negative_prompt='deformed face, distorted anatomy, blurry, waxy skin')
             with torch.inference_mode():
                 if self.mode != 'prompt_only':
-                    embedding = torch.tensor(self._faces.embedding(image), device=cfg.device, dtype=pipe.dtype)
+                    embedding = torch.tensor(self._faces.embedding(edit if edit is not None else image),
+                                             device=cfg.device, dtype=pipe.dtype)
                     embedding = embedding.reshape(1, 1, 1, -1)
                     conditioning['ip_adapter_image_embeds'] = [torch.cat([torch.zeros_like(embedding), embedding])]
                     clip = pipe.prepare_ip_adapter_image_embeds(
@@ -213,7 +228,8 @@ class AgeShiftPipeline:
                         raise GenerationError('Generation was blocked by the model safety checker')
                     if len(result.images) != 1 or not isinstance(result.images[0], Image.Image):
                         raise GenerationError('Expected one generated PIL image per target')
-                    images.append(result.images[0].convert('RGB'))
+                    generated = result.images[0].convert('RGB')
+                    images.append(self._faces.finish_edit(edit, generated) if edit is not None else generated)
                 return images
         except GenerationError:
             raise

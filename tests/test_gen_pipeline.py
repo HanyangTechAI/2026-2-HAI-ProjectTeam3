@@ -41,6 +41,10 @@ def fake_runtime(automatic=True):
         pipe.return_value = SimpleNamespace(images=[Image.new('RGB', (512, 512), 'blue')], nsfw_content_detected=None)
         faces = Mock()
         faces.prepare.return_value = (Image.new('RGB', (512, 512)), 'female')
+        faces.prepare_edit.side_effect = lambda image: SimpleNamespace(
+            original=image, crop=Image.new('RGB', (512, 512)),
+            mask=Image.new('L', (512, 512), 255), face=SimpleNamespace(gender=0))
+        faces.finish_edit.side_effect = lambda edit, generated: generated.resize(edit.original.size)
         faces.embedding.return_value = [1.0] + [0.0] * 511
         torch = ModuleType('torch')
         torch.float16, torch.float32 = 'float16', 'float32'
@@ -58,6 +62,8 @@ def fake_runtime(automatic=True):
         diffusers = ModuleType('diffusers')
         diffusers.StableDiffusionImg2ImgPipeline = Mock()
         diffusers.StableDiffusionImg2ImgPipeline.from_pretrained.return_value = pipe
+        diffusers.StableDiffusionInpaintPipeline = Mock()
+        diffusers.StableDiffusionInpaintPipeline.from_pretrained.return_value = pipe
         diffusers.DPMSolverMultistepScheduler = Mock()
         transformers = ModuleType('transformers')
         transformers.CLIPVisionModelWithProjection = Mock()
@@ -78,6 +84,8 @@ class PipelineContracts(unittest.TestCase):
                 self.assertTrue(age_prompt(age, gender).startswith('a photo of a '))
         self.assertEqual(age_prompt(29, 'female'), 'a photo of a woman in her 20s')
         self.assertEqual(age_prompt(30, 'male'), 'a photo of a man in his 30s')
+        self.assertEqual(age_prompt(80, 'female'), 'a photo of a elderly woman aged 70 or older')
+        self.assertEqual(age_prompt(50, 'male'), age_prompt(69, 'male'))
         for age in (-1, 101, 25.5, True):
             with self.assertRaises(ValueError):
                 age_prompt(age)
@@ -102,7 +110,8 @@ class PipelineContracts(unittest.TestCase):
 
     def test_config_validation(self):
         for values in ({'steps': 0}, {'strength': float('nan')}, {'steps': 1, 'strength': .1},
-                       {'guidance_scale': 1}, {'age_lora_scale': -1}, {'device': 'magic'}, {'seed': -1}):
+                       {'guidance_scale': 1}, {'age_lora_scale': -1}, {'device': 'magic'}, {'seed': -1},
+                       {'preserve_background': 'true'}):
             with self.assertRaises(ValueError):
                 PipelineConfig(**values)
 
@@ -133,7 +142,8 @@ class PipelineContracts(unittest.TestCase):
         with fake_runtime() as rt:
             pipeline = AgeShiftPipeline(replace(rt.config, ip_adapter='', image_encoder='', age_lora=''), 'prompt_only')
             pipeline.load().load()
-            rt.diffusers.StableDiffusionImg2ImgPipeline.from_pretrained.assert_called_once()
+            rt.diffusers.StableDiffusionInpaintPipeline.from_pretrained.assert_called_once()
+            rt.diffusers.StableDiffusionImg2ImgPipeline.from_pretrained.assert_not_called()
             rt.pipe.load_ip_adapter.assert_not_called()
             rt.pipe.load_lora_weights.assert_not_called()
             rt.transformers.CLIPVisionModelWithProjection.from_pretrained.assert_not_called()
@@ -176,13 +186,37 @@ class PipelineContracts(unittest.TestCase):
     def test_face_failure_and_inference_failure_are_explicit(self):
         with fake_runtime() as rt:
             pipeline = AgeShiftPipeline(rt.config, 'prompt_only').load()
-            rt.faces.prepare.side_effect = FaceNotFoundError('face_not_detected')
+            prepare_edit = rt.faces.prepare_edit.side_effect
+            rt.faces.prepare_edit.side_effect = FaceNotFoundError('face_not_detected')
             with self.assertRaises(FaceNotFoundError):
                 pipeline.age_shift(Image.new('RGB', (64, 64)), [35])
-            rt.faces.prepare.side_effect = None
+            rt.faces.prepare_edit.side_effect = prepare_edit
             rt.pipe.side_effect = RuntimeError('device failure')
             with self.assertRaisesRegex(GenerationError, 'Inference failed'):
                 pipeline.age_shift(Image.new('RGB', (64, 64)), [35])
+
+    def test_face_only_inpainting_composites_into_original_dimensions(self):
+        with fake_runtime() as rt:
+            source = Image.new('RGB', (320, 240), 'red')
+            before = source.tobytes()
+            result = AgeShiftPipeline(rt.config, 'faceid').age_shift(source, [25, 65])
+            self.assertEqual([image.size for image in result], [source.size, source.size])
+            self.assertEqual(source.tobytes(), before)
+            rt.faces.prepare_edit.assert_called_once_with(source)
+            rt.faces.prepare.assert_not_called()
+            self.assertEqual(rt.faces.finish_edit.call_count, 2)
+            self.assertEqual(rt.pipe.call_args.kwargs['mask_image'].mode, 'L')
+            self.assertIn('negative_prompt', rt.pipe.call_args.kwargs)
+
+    def test_explicit_crop_mode_remains_available_for_existing_callers(self):
+        with fake_runtime() as rt:
+            result = AgeShiftPipeline(replace(rt.config, preserve_background=False), 'prompt_only').age_shift(
+                Image.new('RGB', (320, 240)), [25])
+            rt.diffusers.StableDiffusionImg2ImgPipeline.from_pretrained.assert_called_once()
+            rt.faces.prepare_edit.assert_not_called()
+            rt.faces.finish_edit.assert_not_called()
+            self.assertNotIn('mask_image', rt.pipe.call_args.kwargs)
+            self.assertEqual(result[0].size, (512, 512))
 
     def test_safety_checker_rejection_is_not_a_successful_image(self):
         with fake_runtime() as rt:
