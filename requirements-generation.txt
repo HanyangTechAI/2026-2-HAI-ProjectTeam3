@@ -1,5 +1,6 @@
 # Optional real generation stack. Mock generation needs only Pillow from requirements.txt.
-# API implementation targets Diffusers 0.35.1; real weights/GPU remain unverified.
+# Diffusers 0.35.1 verified on RTX 4060 with torch 2.8.0+cu128 (Python 3.11).
+# Exact environment, model revisions and limitations: docs/server-setup.md.
 -r requirements.txt
 diffusers==0.35.1
 transformers>=4.41,<5

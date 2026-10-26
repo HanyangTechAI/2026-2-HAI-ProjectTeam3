@@ -1,6 +1,6 @@
 # GitHub 업로드와 서버 실행
 
-현재 구현된 나이 추정과 생성·연동 코드를 서버로 옮기는 안내입니다. `gen/`은 중간 발표용 인터페이스·로딩·평가·orchestration과 Mock 검증까지 구현했습니다. 실제 생성 가중치를 사용한 실행은 아직 검증하지 않았습니다.
+현재 구현된 나이 추정과 생성·연동 코드를 서버로 옮기는 안내입니다. `gen/`은 중간 발표용 인터페이스·로딩·평가·orchestration과 Mock 검증을 구현했습니다. 2026-10-26 RTX 4060에서 `prompt_only`와 `faceid`의 실제 이미지 생성을 각각 1장 검증했습니다. Age LoRA 학습·`faceid_age`·정식 나이 정확도 평가는 아직 검증하지 않았습니다.
 
 ## GitHub에 올릴 파일
 
@@ -93,23 +93,23 @@ python -m age.evaluate --checkpoint outputs/age/aihub/best.pt --csv data/age_aih
 python -m age.export_onnx --checkpoint outputs/age/aihub/best.pt --csv data/age_aihub/val.csv --output outputs/age/age_estimator.onnx
 ```
 
-현재 검증한 환경은 Windows CPU입니다. Linux 서버의 GPU 실행은 첫 epoch로 확인해야 합니다.
+나이 추정 학습을 검증한 환경은 Windows CPU입니다. Linux 서버의 나이 추정 GPU 학습은 첫 epoch로 확인해야 합니다. 아래 생성 GPU 검증은 이 학습 검증과 별개입니다.
 
 ## 생성 파이프라인과 최소 연동
 
 ### 중간 발표용 검증 범위
 
-2026-10-26 Linux/Python 3.14.8, Pillow 12.3.0에서 `test_gen_*.py` 29개와 `gen.smoke`를 실행했습니다. PyTorch·NumPy·Diffusers·ONNX Runtime 설치나 모델 다운로드 없이 확인했습니다. 실제 모델 로딩 API를 검사하는 테스트도 모의 런타임을 사용하므로 GPU·텐서 수치·실제 모델 호환성의 증거가 아닙니다.
+1차 Mock 검증에서는 2026-10-26 Linux/Python 3.14.8, Pillow 12.3.0에서 `test_gen_*.py` 29개와 `gen.smoke`를 실행했습니다. PyTorch·NumPy·Diffusers·ONNX Runtime 설치나 모델 다운로드 없이 확인했습니다. 실제 모델 로딩 API를 검사하는 테스트도 모의 런타임을 사용하므로 GPU·텐서 수치·실제 모델 호환성의 증거가 아닙니다. 이후 같은 날 수행한 실제 GPU 검증은 아래 별도 절에 기록합니다.
 
 | 구분 | 상태 |
 |---|---|
 | 구현 완료 | 생성 입출력, 로컬 모델 로딩 코드, 캡션 매핑, 평가 루프/CSV, 원본+생성 3장 orchestration, 2×2 합성 |
 | Mock 검증 완료 | 순서·원본 보존·중복 목표 나이·오류 전달·모드별 호출·평가 집계·CSV/JSON 출력 |
-| 실제 모델 검증 | 미실행. 생성 가중치·정식 나이 ONNX·Age LoRA가 없음 |
-| 실제 성능 평가 | 미실행. 연령 MAE·정체성 보존·얼굴 검출률·GPU 처리 시간 미측정 |
+| 실제 모델 검증 | `prompt_only`와 `faceid` 각 1장 성공. `faceid_age`와 정식 나이 ONNX 미검증 |
+| 실제 성능 평가 | 단일 입력의 GPU 시간·메모리·FaceID cosine 기록. 연령 MAE·모집단 정체성 보존·얼굴 검출률은 미평가 |
 | 범위 밖 | HTTP API, 웹 UI, 카메라, 프린터, ControlNet, TensorRT, LCM |
 
-기존 전체 `unittest` 실행은 `test_age`의 torch 및 `test_face`의 numpy import에서 중단됐습니다. 신규 생성 테스트 29개는 통과했지만 전체 테스트 통과라고 보고하지 않습니다. 기존 나이 추정의 Windows 검증 기록과 이번 생성 Mock 검증 기록을 구분하세요.
+1차 Mock 환경의 전체 `unittest` 실행은 `test_age`의 torch 및 `test_face`의 numpy import에서 중단됐습니다. 이후 실제 GPU 환경에서는 전체 42개 중 40개 통과·2개 스킵으로 재검증했습니다. 기존 나이 추정의 Windows 검증, 1차 생성 Mock 검증, 아래 실제 GPU 검증 기록을 구분하세요.
 
 ```bash
 python -m unittest discover -s tests -p "test_gen_*.py" -v
@@ -149,7 +149,7 @@ finally:
 
 ### 실제 모델 준비와 실행
 
-아래는 **필요한 가중치가 준비된 이후의 실행 경로**이며, 이번 작업에서 실행한 명령이 아닙니다. 서버에 맞는 CUDA PyTorch를 먼저 설치하고 생성 의존성을 준비합니다.
+아래는 **필요한 가중치가 준비된 이후의 일반 실행 경로**입니다. 실제 검증에 사용한 버전·모델 출처·설정·명령은 아래 GPU 검증 절에 기록합니다. 서버에 맞는 CUDA PyTorch를 먼저 설치하고 생성 의존성을 준비합니다.
 
 ```bash
 python -m pip install -r requirements-generation.txt
@@ -181,7 +181,102 @@ python -m gen.pipeline --config gen/config.example.json --mode faceid --image da
 python -m gen.pipeline --config gen/config.example.json --mode faceid_age --image data/demo/portrait.png --targets 15 35 45 --output outputs/gen_full_trial
 ```
 
-모델·데이터의 비상업 연구 및 원저작자 이용 조건을 확인해야 합니다. 실제 모델 로딩·GPU 메모리·생성 이미지 품질은 첫 실제 실행에서 별도로 검증합니다.
+모델·데이터의 비상업 연구 및 원저작자 이용 조건을 확인해야 합니다. 아래 단일 샘플의 로딩·추론 검증은 제품 수준의 나이 정확도·정체성 보존 검증이 아닙니다.
+
+### 실제 GPU 검증 기록 (2026-10-26)
+
+`feat/generation-midterm`에서 기존 추론 코드와 29개 생성 테스트를 수정하지 않고 실행했습니다. 다른 모델로 교체하거나 실패를 Mock으로 대체하지 않았습니다. FFHQ-Aging·AI Hub 데이터와 Age LoRA는 사용하지 않았고 학습도 수행하지 않았습니다.
+
+#### 환경과 설치
+
+| 항목 | 확인 결과 |
+|---|---|
+| GPU | NVIDIA GeForce RTX 4060, `nvidia-smi` 총 8,188 MiB; PyTorch가 보고한 사용 가능 총량 7,885.5 MiB |
+| 드라이버 / CUDA | 615.78.08 / PyTorch CUDA runtime 12.8; 드라이버 표기의 CUDA UMD 13.4와 구분 |
+| CUDA 동작 | `torch.cuda.is_available() == True`, 실제 GPU 행렬곱과 유한값 검사 성공 |
+| Python | 시스템 3.14.8 대신 `.venv`의 Python 3.11.16 사용 |
+| 메모리 / 디스크 | 시스템 RAM 31 GiB; 프로젝트 디스크 여유 약 134 GiB에서 준비 후 122.44 GiB |
+| GPU 공존 | 시작 시 데스크톱 프로그램이 약 1.5 GiB 사용. 다른 프로세스를 종료하지 않음 |
+| 얼굴 전처리 | ONNX Runtime CPU provider; diffusion UNet·VAE·FaceID CLIP은 CUDA FP16 |
+
+사용 패키지는 torch **2.8.0+cu128**, torchvision **0.23.0+cu128**, diffusers **0.35.1**, transformers **4.57.6**, peft **0.17.1**, accelerate **1.15.0**, safetensors **0.8.0**, huggingface-hub **0.36.2**, onnxruntime **1.31.0**, numpy **2.4.6**, Pillow **12.3.0**, scikit-image **0.26.0**입니다. 전체 의존성 버전은 산출물의 `packages.txt`에 보관했고 `uv pip check`도 통과했습니다. 실행한 설치 명령은 다음과 같습니다.
+
+```bash
+python3.11 -m venv .venv
+uv pip install --python .venv/bin/python 'torch==2.8.0' 'torchvision==0.23.0' -r requirements-generation.txt
+.venv/bin/python -m age.setup_models --with-arcface
+```
+
+범위형 requirements를 나중에 다시 해석하면 하위 패키지가 달라질 수 있습니다. 동일 서버의 정확한 재설치에는 `outputs/gpu_validation_20261026/packages.txt`를 사용하세요.
+
+#### 공식 모델과 이용 조건
+
+| 구성 | 공식 배포처 / 고정 revision | 사용 파일·형식 / 조건 |
+|---|---|---|
+| Realistic Vision V5.1 | [SG161222/Realistic_Vision_V5.1_noVAE](https://huggingface.co/SG161222/Realistic_Vision_V5.1_noVAE/tree/1e9f017a7b1eaefb63a1900ea6c5953d2739fd21), `1e9f017a7b1eaefb63a1900ea6c5953d2739fd21` | SD1.5의 완전한 Diffusers 디렉터리, UNet·text encoder·VAE는 Safetensors. CreativeML OpenRAIL-M |
+| FaceID Plus v2 | [h94/IP-Adapter-FaceID](https://huggingface.co/h94/IP-Adapter-FaceID/tree/43907e6f44d079bf1a9102d9a6e56aef7a219bae), `43907e6f44d079bf1a9102d9a6e56aef7a219bae` | `ip-adapter-faceid-plusv2_sd15.bin`, PyTorch checkpoint. 모델 카드의 연구 전용·비상업 조건 |
+| FaceID LoRA | 위와 동일한 배포처·revision | `ip-adapter-faceid-plusv2_sd15_lora.safetensors`, 51,059,544 bytes. 위 어댑터와 짝을 이루는 SD1.5 LoRA |
+| CLIP vision encoder | [h94/IP-Adapter](https://huggingface.co/h94/IP-Adapter/tree/018e402774aeeddd60609b4ecdb7e298259dc729/models/image_encoder), `018e402774aeeddd60609b4ecdb7e298259dc729` | 공식 `models/image_encoder/{config.json,model.safetensors}`. LAION ViT-H/14의 vision-only 배포본이며 SDXL용 bigG가 아님 |
+| CLIP 전처리 | [laion/CLIP-ViT-H-14-laion2B-s32B-b79K](https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K/tree/1c2b8495b28150b8a4922ee1c8edee224c284c0c), `1c2b8495b28150b8a4922ee1c8edee224c284c0c` | `preprocessor_config.json`을 위 encoder 디렉터리에 추가. upstream MIT, 모델 카드의 배포·감시 용도 제한 안내도 별도 확인 |
+| 얼굴 검출·인식 | [InsightFace 공식 v0.7 buffalo_l.zip](https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip) | `det_10g.onnx`, `genderage.onnx`, `w600k_r50.onnx`. 코드 MIT와 달리 사전학습 가중치는 비상업 연구 전용 |
+
+base 저장소 이름에 `noVAE`가 있지만 해당 revision의 Diffusers 트리에는 `vae/config.json`과 `vae/diffusion_pytorch_model.safetensors`가 실제로 있습니다. 이를 그대로 사용했고 별도 VAE로 교체하지 않았습니다. 제작자가 권장한 별도 VAE fine-tune과 이 파일이 같은지는 검증하지 않았습니다. 루트의 단일 `.ckpt`·`.safetensors`, inpainting 및 SDXL 변형은 사용하지 않았습니다.
+
+FaceID LoRA는 설정의 `faceid_lora`에 명시해 자동 로드된 `faceid_0`를 제거한 후 이름 `faceid`로 적용했습니다. 실제 활성 어댑터 목록은 `{"unet": ["faceid"]}`였습니다. `shortcut=True`, `ip_scale=0.8`, `faceid_lora_scale=1.0`입니다. Age LoRA 경로는 빈 문자열입니다. 다운로드 파일의 크기와 SHA-256은 `model_sources.json` 및 `models/insightface/provenance.json`에 기록했습니다.
+
+FaceID에는 별도의 상세 가중치 라이선스 파일이 없어 [모델 카드의 연구용 제한](https://huggingface.co/h94/IP-Adapter-FaceID/blob/43907e6f44d079bf1a9102d9a6e56aef7a219bae/README.md)을 따릅니다. 일반 IP-Adapter 코드의 Apache-2.0을 FaceID 가중치의 상업적 사용 허가로 해석하면 안 됩니다. [OpenRAIL-M](https://github.com/CompVis/stable-diffusion/blob/main/LICENSE), [InsightFace 가중치 조건](https://github.com/deepinsight/insightface/blob/v0.7/python-package/README.md#license)도 각각 적용됩니다.
+
+#### 입력 허가와 실제 실행
+
+입력은 scikit-image 0.26.0에 포함된 `astronaut.png`입니다. [공식 scikit-image 설명](https://scikit-image.org/docs/stable/api/skimage.data.html#skimage.data.astronaut)과 [NASA 원출처](https://www.flickr.com/photos/nasacommons/16504233985/)에서 Eileen Collins의 NASA 사진 `S99-00858`, public domain / no known copyright restrictions임을 확인했습니다. 원본 SHA-256은 `88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5`입니다.
+
+[NASA 이미지·AI 사용 지침](https://www.nasa.gov/nasa-brand-center/images-and-media/)에 따라 **모델에 입력하기 전에** `(125, 10, 335, 225)` 얼굴 영역만 잘라 NASA 로고·휘장을 제외했습니다. 교육·비상업 연구 검증에만 사용하며 상업적 초상 이용 허가를 주장하지 않습니다. 비교 이미지에는 원본 출처와 AI 생성물임을 구분했습니다. 결과는 이 프로젝트의 합성이며 NASA의 제작·보증이나 해당 나이의 실제 사진이 아닙니다.
+
+사용 설정은 출력 512×512, seed 42, target 55, gender female, DPM++ 2M Karras, steps 25, strength 0.6, CFG 7.5입니다. img2img에서 실제 denoising은 15회였습니다. 측정 스크립트는 `AgeShiftPipeline.load()`와 `age_shift()`를 직접 호출하며 Mock 경로가 없습니다. 실행 명령:
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=. .venv/bin/python outputs/gpu_validation_20261026/verify.py --mode prompt_only --config outputs/gpu_validation_20261026/config.json --image outputs/gpu_validation_20261026/input_face.png --target 55 --output outputs/gpu_validation_20261026/prompt_only
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=. .venv/bin/python outputs/gpu_validation_20261026/verify.py --mode faceid --config outputs/gpu_validation_20261026/config.json --image outputs/gpu_validation_20261026/input_face.png --target 55 --output outputs/gpu_validation_20261026/faceid
+```
+
+각 디렉터리는 이미 결과가 있으므로 재실행 시 새로운 `--output` 경로를 사용해야 합니다. `prepare.py`·`verify.py`는 이 서버의 실행 기록으로 `outputs/`에 보관하며 Git clone에는 포함되지 않습니다. 일반 생성 진입점은 기존 `.venv/bin/python -m gen.pipeline`이며 같은 설정·입력으로 `--mode faceid --targets 55 --gender female --output <새 경로>`를 사용할 수 있습니다.
+
+#### 측정과 산출물
+
+| 모드 | 실제 생성 | 초기 로딩 | 한 장 생성 | 생성 peak allocated / reserved | 생성 후 전체 GPU 사용량 |
+|---|---|---:|---:|---:|---:|
+| `prompt_only` | 성공, 512×512 PNG | 4.417초 | 2.201초 | 2,675.38 / 2,960 MiB | 4,611 MiB |
+| `faceid` | 성공, 512×512 PNG | 4.021초 | 2.614초 | 4,044.43 / 4,372 MiB | 5,988 MiB |
+
+각 모드는 별도 프로세스에서 워밍업 없이 한 번 측정했습니다. 타이머 경계에서 CUDA를 동기화했으며 생성 시간은 얼굴 전처리·임베딩을 포함하고 PNG 저장·후속 cosine 계산을 제외합니다. 모델 로딩은 `load()` 호출 시간이며 다운로드·가상환경 설치·사전 torch import는 제외합니다. OS 파일 캐시는 비우지 않았으므로 cold-disk 벤치마크나 평균 처리량이 아닙니다. peak는 PyTorch allocator 기준이고 전체 GPU 열은 다른 앱을 포함한 `nvidia-smi`의 **생성 후 스냅샷**, 전체 장치 peak가 아닙니다.
+
+공통 경로는 `outputs/gpu_validation_20261026/`입니다.
+
+```text
+config.json, packages.txt, model_sources.json, sample_source.json
+input_face.png, prepare.py, verify.py, summarize.py, validation.json
+prompt_only/{age_55.png,input.png,input_crop.png,comparison.png,config.json,run.json}
+faceid/{age_55.png,input.png,input_crop.png,comparison.png,config.json,run.json}
+prepare.log, insightface_setup.log, prompt_only.log, faceid.log
+tests_generation.log, tests_all.log, mock_smoke.log, mock_smoke/
+```
+
+비교 이미지를 열어 원본·정렬 입력·생성물이 정상인지 확인했습니다. 생성 얼굴의 헤어스타일·표정·피부 질감 변화가 보이지만, FaceID 결과를 정확한 55세 변환이나 동일인 보존의 증명으로 해석하지 않습니다. FaceID 출력에서 얼굴 검출에 성공했고 입력 대비 ArcFace cosine은 **0.655573**입니다. 단일 표본의 참고값이며 확률·정확도·검증된 판정 임계값이 아닙니다. 정식 나이 추정 ONNX가 없어 연령 MAE는 측정하지 않았습니다.
+
+#### 재검증과 남은 범위
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p 'test_gen_*.py' -v
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m gen.smoke --output outputs/gpu_validation_20261026/mock_smoke
+```
+
+- 기존 생성 테스트 **29/29 통과**. 테스트 파일을 수정하지 않았습니다.
+- 전체 테스트 **42개 중 40개 통과, 2개 스킵**, 실패·오류 0개. 스킵은 `Requires smoke ONNX`, `Requires actual prepared faces`이며 모두 통과했다고 보고하지 않습니다.
+- 명시적 Mock smoke의 4컷·9개 평가 행도 정상 생성했습니다. 이 결과를 실제 추론 결과와 섞지 않았습니다.
+- CUDA ONNX provider 부재, `torch_dtype` 및 scikit-image `estimate` 사용 중단 예고, FaceID LoRA의 text-encoder 키 부재 경고가 있었습니다. ONNX는 CPU 실행으로 확인했고 해당 LoRA는 UNet용입니다. 로딩·추론 실패나 OOM은 없었으며 API·모델 코드를 수정할 필요가 없었습니다.
+- 제작자 base `model_index.json`에는 safety checker가 `null`입니다. 검증에서 이를 새로 끄거나 대체하지 않았고, 따라서 실제 출력의 안전 필터를 검증한 것으로 간주하지 않습니다. 공개 서비스 전 별도 정책·안전 검토가 필요합니다.
+- Age LoRA 학습, `faceid_age`, 정식 나이 ONNX, 실제 데이터 기반 4컷, 여러 인물의 연령 MAE·정체성 보존 평가는 남아 있습니다. 모델·입력·생성물·가상환경은 기존 `.gitignore`에 따라 Git에 넣지 않았습니다.
 
 ### D팀 연동
 
