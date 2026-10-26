@@ -25,3 +25,4 @@ models/
 .env.*
 !.env.example
 *credentials*.json
+AGENTS.md
