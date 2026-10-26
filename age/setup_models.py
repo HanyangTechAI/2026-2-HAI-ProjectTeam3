@@ -16,6 +16,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--model-root', type=Path, default=Path('models/insightface'))
     p.add_argument('--archive', type=Path, help='Already downloaded official buffalo_l.zip')
+    p.add_argument('--with-arcface', action='store_true', help='Also prepare recognition embeddings for generation/evaluation')
     args = p.parse_args()
     root = args.model_root
     runtime = root / 'python_runtime'
@@ -24,7 +25,10 @@ def main():
         dest = runtime / sub
         dest.mkdir(parents=True, exist_ok=True)
         (dest / '__init__.py').touch(exist_ok=True)
-    for relative in ('model_zoo/scrfd.py', 'model_zoo/attribute.py', 'utils/face_align.py'):
+    sources = ['model_zoo/scrfd.py', 'model_zoo/attribute.py', 'utils/face_align.py']
+    if args.with_arcface:
+        sources.append('model_zoo/arcface_onnx.py')
+    for relative in sources:
         url = SOURCE + 'python-package/insightface/' + relative
         path = runtime / relative
         download(url, path)
@@ -38,7 +42,10 @@ def main():
     dest = root / 'models/buffalo_l'
     dest.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive) as z:
-        for basename in ('det_10g.onnx', 'genderage.onnx'):
+        models = ['det_10g.onnx', 'genderage.onnx']
+        if args.with_arcface:
+            models.append('w600k_r50.onnx')
+        for basename in models:
             names = [n for n in z.namelist() if Path(n).name == basename]
             if len(names) != 1:
                 raise ValueError(f'Expected one {basename} in official buffalo_l archive')
