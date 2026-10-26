@@ -1,6 +1,6 @@
 # GitHub 업로드와 서버 실행
 
-현재 구현된 나이 추정과 생성·연동 코드를 서버로 옮기는 안내입니다. `gen/`은 중간 발표용 인터페이스·로딩·평가·orchestration과 Mock 검증을 구현했습니다. 2026-10-26 RTX 4060에서 `prompt_only`와 `faceid`의 실제 이미지 생성을 각각 1장 검증했습니다. Age LoRA 학습·`faceid_age`·정식 나이 정확도 평가는 아직 검증하지 않았습니다.
+현재 구현된 나이 추정과 생성·연동 코드를 서버로 옮기는 안내입니다. `gen/`은 중간 발표용 인터페이스·로딩·평가·orchestration과 Mock 검증을 구현했습니다. 2026-10-26 RTX 4060에서 `prompt_only`와 `faceid`를 검증한 뒤, FFHQ-Aging으로 12-step Age LoRA 학습·재로딩·`faceid_age` 생성 1장도 확인했습니다. 연령 변환 품질·정식 나이 정확도 평가는 아직 수행하지 않았습니다.
 
 ## GitHub에 올릴 파일
 
@@ -27,6 +27,8 @@ data/README.md                 # 데이터 출처와 라벨 설명만
 |---|---|
 | `data/raw/aihub/` | 승인된 전체 AI Hub 이미지·JSON을 별도 전송하거나 서버에서 다운로드·압축 해제 |
 | `data/age_aihub/` | 전처리 코드가 정렬 이미지와 train/val/test CSV를 생성 |
+| `data/lora/` | 로컬에 확보한 FFHQ-Aging 준비본의 train/val/test 폴더를 그대로 별도 전송. Age LoRA 학습용이며 AI Hub 입력과 별개 |
+| `data/gen_eval/`, `data/reports/` | FFHQ val/test 상대 경로 CSV, 이동 검증 보고서·이미지별 출처·라이선스를 데이터와 함께 전송 |
 | `models/insightface/` | `python -m age.setup_models`로 공식 소스·buffalo_l 가중치 다운로드 |
 | `models/torch/` | 학습 시 ImageNet 사전학습 MobileNetV3 가중치 자동 다운로드 |
 | `outputs/` | 학습 체크포인트·설정·시간 기록·평가·ONNX를 실행 중 생성 |
@@ -105,7 +107,7 @@ python -m age.export_onnx --checkpoint outputs/age/aihub/best.pt --csv data/age_
 |---|---|
 | 구현 완료 | 생성 입출력, 로컬 모델 로딩 코드, 캡션 매핑, 평가 루프/CSV, 원본+생성 3장 orchestration, 2×2 합성 |
 | Mock 검증 완료 | 순서·원본 보존·중복 목표 나이·오류 전달·모드별 호출·평가 집계·CSV/JSON 출력 |
-| 실제 모델 검증 | `prompt_only`와 `faceid` 각 1장 성공. `faceid_age`와 정식 나이 ONNX 미검증 |
+| 실제 모델 검증 | `prompt_only`·`faceid`·12-step LoRA를 사용한 `faceid_age` 각 1장 성공. 정식 나이 ONNX 미검증 |
 | 실제 성능 평가 | 단일 입력의 GPU 시간·메모리·FaceID cosine 기록. 연령 MAE·모집단 정체성 보존·얼굴 검출률은 미평가 |
 | 범위 밖 | HTTP API, 웹 UI, 카메라, 프린터, ControlNet, TensorRT, LCM |
 
@@ -147,6 +149,37 @@ finally:
 - 얼굴 미검출은 `FaceNotFoundError`, 로컬 자산 누락은 `ModelUnavailableError`, 생성 실패는 `GenerationError`로 전달합니다. 실제 모드 실패를 Mock으로 자동 대체하지 않습니다.
 - 한 인스턴스는 순차 요청용입니다. 서버에서 병렬 요청으로 공유하는 기능은 이번 범위에 없습니다.
 
+### 준비된 FFHQ-Aging 데이터
+
+2026-10-26에 외부 `ffhq-prepared/`를 프로젝트의 `data/lora/`로 이동했습니다. 기존 설계의 준비본 경로에 맞춘 것이며 `raw/`에 넣거나 `age.prep`로 다시 처리하지 않았습니다. 구성과 출처는 [데이터 안내](../data/README.md#ffhq-aging-배치와-사용)에 기록했습니다.
+
+| 경로 | 장수 | 용도 |
+|---|---:|---|
+| `data/lora/train/` | 8,163 | Age LoRA 학습 입력. 이미지와 캡션을 사용하는 외부 학습 스크립트에 이 디렉터리만 전달 |
+| `data/lora/val/` | 400 | 개발·설정·체크포인트 선택. `data/gen_eval/ffhq_val.csv`로 생성 평가에 연결 |
+| `data/lora/test/` | 100 | 설정 고정 후 최종 평가. `data/gen_eval/ffhq_test.csv`로 연결하며 학습·튜닝에 사용하지 않음 |
+
+각 split은 RGB 512×512 PNG와 `metadata.jsonl`의 `file_name`·`text`로 구성됩니다. 캡션은 `gen.pipeline.age_prompt`와 일치하며, FFHQ의 연령 그룹은 정확한 나이 정답이 아닙니다. 따라서 `age.train --data-dir`에 전달하거나 `gen/config.example.json`의 `age_lora`에 데이터 경로를 적으면 안 됩니다. 후자는 학습된 가중치 파일입니다.
+
+`gen.train_lora`가 공식 Diffusers 0.35.1 LoRA 예제를 해시 고정해 실행합니다. `data/lora/train`만 읽으며, `data/lora/` 전체를 하나의 학습 폴더로 재귀 수집하면 val/test가 섞이므로 거부합니다. 데이터 이동 자체와 후속 학습 검증은 별개입니다. RTX 4060에서 전체 무결성 검사와 12-step 학습·재개·재로딩·`faceid_age` 1장 생성까지 수행한 절차는 [Age LoRA 검증 보고서](age-lora-validation.md)에 있습니다. 데이터를 다시 받지 않습니다.
+
+데이터 파일 연결만 확인하려면 프로젝트 루트에서 val 이미지로 Mock을 실행합니다. 실제 얼굴 검출·연령 변환·정확도 검증이 아닙니다.
+
+```bash
+python -m gen.pipeline --mock --image data/lora/val/images/00033.png --targets 15 35 45 --output outputs/ffhq_val_image_mock
+```
+
+`gen.eval`은 JSONL 대신 별도 CSV를 읽으며 상대 경로는 CSV 디렉터리 기준입니다. 새 평가 CSV는 `../lora/val/images/...` 또는 `../lora/test/images/...`를 참조하므로 이미지 복사 없이 사용할 수 있습니다.
+
+```bash
+# val 전체의 입력·출력 연결 확인. 성능 지표는 계산하지 않음.
+python -m gen.eval --mock --csv data/gen_eval/ffhq_val.csv --targets 15 35 45 --output outputs/ffhq_val_eval_mock
+# Age LoRA·정식 나이 ONNX를 준비하고 설정을 고정한 뒤 최종 평가
+python -m gen.eval --config gen/config.example.json --csv data/gen_eval/ffhq_test.csv --targets 15 35 45 --age-onnx outputs/age/age_estimator.onnx --output outputs/ffhq_test_eval
+```
+
+test 100장은 이미지 ID·파일 해시 기준으로 train/val과 겹치지 않지만, 인물 ID가 없어 **동일인 분리까지 보장하지는 않습니다**. 최종 성능 보고 전 별도 확인이 필요합니다. 모든 출력 경로는 새 디렉터리를 사용하세요.
+
 ### 실제 모델 준비와 실행
 
 아래는 **필요한 가중치가 준비된 이후의 일반 실행 경로**입니다. 실제 검증에 사용한 버전·모델 출처·설정·명령은 아래 GPU 검증 절에 기록합니다. 서버에 맞는 CUDA PyTorch를 먼저 설치하고 생성 의존성을 준비합니다.
@@ -166,7 +199,7 @@ python -m age.setup_models --with-arcface
 | `image_encoder` | `laion/CLIP-ViT-H-14-laion2B-s32B-b79K`에 대응하는 Transformers 모델·전처리 설정 디렉터리 |
 | `ip_adapter` | `ip-adapter-faceid-plusv2_sd15.bin` 파일 |
 | `faceid_lora` | 기본 빈 값: 체크포인트에 포함되어 Diffusers가 자동 로드한 `faceid_0` 사용. 별도 짝을 이루는 FaceID LoRA 파일을 지정하면 자동 어댑터를 제거하고 교체 |
-| `age_lora` | 별도 학습된 SD1.5 Age LoRA. 현재 제공하지 않음 |
+| `age_lora` | 별도 학습된 SD1.5 Age LoRA 파일. 12-step 로컬 smoke export는 검증 보고서 참고; 가중치는 Git에 포함하지 않음 |
 | `model_root` | `age.setup_models --with-arcface`로 준비한 InsightFace 디렉터리 |
 
 `prompt_only`는 base와 검출·정렬 자산만 필요하며, `faceid`는 Age LoRA 없이 실행합니다. `faceid_age`만 Age LoRA까지 요구합니다. FaceID 모드는 CLIP·ArcFace 임베딩을 함께 사용하고 Plus v2의 shortcut을 활성화합니다. FaceID LoRA와 Age LoRA의 가중치는 별도로 적용합니다.
@@ -185,7 +218,7 @@ python -m gen.pipeline --config gen/config.example.json --mode faceid_age --imag
 
 ### 실제 GPU 검증 기록 (2026-10-26)
 
-`feat/generation-midterm`에서 기존 추론 코드와 29개 생성 테스트를 수정하지 않고 실행했습니다. 다른 모델로 교체하거나 실패를 Mock으로 대체하지 않았습니다. FFHQ-Aging·AI Hub 데이터와 Age LoRA는 사용하지 않았고 학습도 수행하지 않았습니다.
+이 절은 최초 `prompt_only`·`faceid` 검증 기록입니다. `feat/generation-midterm`에서 기존 추론 코드와 29개 생성 테스트를 수정하지 않고 실행했습니다. 다른 모델로 교체하거나 실패를 Mock으로 대체하지 않았습니다. 이 최초 실행에서는 FFHQ-Aging·AI Hub 데이터와 Age LoRA를 사용하지 않았고 학습도 수행하지 않았습니다. 후속 학습 결과는 [별도 보고서](age-lora-validation.md)에 기록했습니다.
 
 #### 환경과 설치
 
@@ -276,7 +309,7 @@ tests_generation.log, tests_all.log, mock_smoke.log, mock_smoke/
 - 명시적 Mock smoke의 4컷·9개 평가 행도 정상 생성했습니다. 이 결과를 실제 추론 결과와 섞지 않았습니다.
 - CUDA ONNX provider 부재, `torch_dtype` 및 scikit-image `estimate` 사용 중단 예고, FaceID LoRA의 text-encoder 키 부재 경고가 있었습니다. ONNX는 CPU 실행으로 확인했고 해당 LoRA는 UNet용입니다. 로딩·추론 실패나 OOM은 없었으며 API·모델 코드를 수정할 필요가 없었습니다.
 - 제작자 base `model_index.json`에는 safety checker가 `null`입니다. 검증에서 이를 새로 끄거나 대체하지 않았고, 따라서 실제 출력의 안전 필터를 검증한 것으로 간주하지 않습니다. 공개 서비스 전 별도 정책·안전 검토가 필요합니다.
-- Age LoRA 학습, `faceid_age`, 정식 나이 ONNX, 실제 데이터 기반 4컷, 여러 인물의 연령 MAE·정체성 보존 평가는 남아 있습니다. 모델·입력·생성물·가상환경은 기존 `.gitignore`에 따라 Git에 넣지 않았습니다.
+- 후속 12-step Age LoRA 학습·`faceid_age` 로딩 검증은 완료했습니다. 충분한 LoRA 학습·품질 평가, 정식 나이 ONNX, 실제 데이터 기반 4컷, 여러 인물의 연령 MAE·정체성 보존 평가는 남아 있습니다. 모델·입력·생성물·가상환경은 기존 `.gitignore`에 따라 Git에 넣지 않았습니다.
 
 ### D팀 연동
 
