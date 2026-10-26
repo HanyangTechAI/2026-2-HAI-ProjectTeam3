@@ -142,7 +142,7 @@ class AgeShiftPipeline:
                 pipe.scheduler.config, algorithm_type='dpmsolver++', solver_order=2, use_karras_sigmas=True)
             if self.mode != 'prompt_only':
                 adapter = Path(cfg.ip_adapter)
-                pipe.load_ip_adapter(str(adapter.parent), weight_name=adapter.name,
+                pipe.load_ip_adapter(str(adapter.parent), subfolder='', weight_name=adapter.name,
                                      image_encoder_folder=None, local_files_only=True)
                 pipe.set_ip_adapter_scale(cfg.ip_scale)
                 # Diffusers can auto-load FaceID LoRA from bundled checkpoint keys.

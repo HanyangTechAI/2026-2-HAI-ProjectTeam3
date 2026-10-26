@@ -34,6 +34,9 @@ def fake_runtime(automatic=True):
         projection = SimpleNamespace(shortcut=False, shortcut_scale=0)
         pipe.unet.encoder_hid_proj.image_projection_layers = [projection]
         pipe.get_list_adapters.return_value = {'unet': ['faceid_0'] if automatic else []}
+        def load_ip_adapter(path, subfolder, weight_name, **kwargs):
+            pass
+        pipe.load_ip_adapter.side_effect = load_ip_adapter
         pipe.to.return_value = pipe
         pipe.return_value = SimpleNamespace(images=[Image.new('RGB', (512, 512), 'blue')], nsfw_content_detected=None)
         faces = Mock()
@@ -152,6 +155,7 @@ class PipelineContracts(unittest.TestCase):
             self.assertEqual(len(rt.pipe.call_args.kwargs['ip_adapter_image_embeds']), 1)
             self.assertIsNotNone(rt.projection.clip_embeds)
             self.assertTrue(rt.pipe.load_ip_adapter.call_args.kwargs['local_files_only'])
+            self.assertEqual(rt.pipe.load_ip_adapter.call_args.kwargs['subfolder'], '')
 
     def test_full_mode_selects_both_loras_with_separate_scales(self):
         with fake_runtime() as rt:
