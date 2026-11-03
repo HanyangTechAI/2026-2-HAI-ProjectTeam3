@@ -26,3 +26,8 @@ models/
 !.env.example
 *credentials*.json
 AGENTS.md
+
+# Local progress reports.
+/docs/progress-summary.md
+/docs/quality-improvement-20261030.md
+/docs/quality-improvement-20261101.md
