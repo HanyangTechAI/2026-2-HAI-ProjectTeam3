@@ -5,6 +5,8 @@ hair, glasses and expression changes outside protected landmarks remain possible
 Only pixels with a nonzero source_mask can change during compositing.
 """
 from dataclasses import dataclass
+import math
+from numbers import Real
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +24,7 @@ class FaceEdit:
     face: dict
     source_mask: Image.Image
     selection_info: dict
+    generation_mask: Image.Image | None = None
 
 
 def _same_face(left, right):
@@ -169,14 +172,38 @@ class FaceTools:
         crop = self.aligner.crop(rgb, face, size=512, context=True)
         return Image.fromarray(crop), 'male' if face.gender == 1 else 'female'
 
-    def prepare_edit(self, image):
+    def prepare_edit(self, image, *, generation_mask_mode='protected', mask_scale=1.0, feature_protection=1.0,
+                     source_edit_mask=None, source_generation_mask=None, source_protect_mask=None):
         """Select once and retain exact original pixels outside compact face support.
 
         Eye/eyelid and mouth cores are also protected geometrically, not by a
         semantic expression model. Bangs or accessories inside the ellipse can
         still be edited; five landmarks cannot identify all skin or expression.
+        Face mode removes feature holes only from generation, not composition.
+        Scaling expands the ellipse, never the face bbox or other-face guards.
+        External masks must be original-size PIL L images. White edit/generation
+        values replace geometric support; any nonzero protection is a hard veto.
+        Custom edit support also drives generation unless separately overridden.
         """
+        if generation_mask_mode not in ('protected', 'face'):
+            raise ValueError('generation_mask_mode must be protected or face')
+        for name, value, lower, upper in (('mask_scale', mask_scale, 1, 1.25),
+                                          ('feature_protection', feature_protection, 0, 1)):
+            if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value) or not lower <= value <= upper:
+                raise ValueError(f'{name} must be finite and in {lower}..{upper}')
         import cv2
+        external = {'source_edit_mask': source_edit_mask, 'source_generation_mask': source_generation_mask,
+                    'source_protect_mask': source_protect_mask}
+        if any(value is not None for value in external.values()):
+            from .pipeline import as_rgb
+            size = as_rgb(image).size
+            for name, value in external.items():
+                if value is None:
+                    continue
+                if not isinstance(value, Image.Image) or value.mode != 'L' or value.size != size:
+                    raise ValueError(f'{name} must be a PIL L image of original size {size}')
+                if name != 'source_protect_mask' and value.getbbox() is None:
+                    raise ValueError(f'{name} must be nonempty')
         rgb, face = self._select(image)
         # EXACT FaceAligner.crop(size=512, context=True) math, without changing age.
         matrix = self.aligner.face_align.estimate_norm(face.kps, image_size=112) * (512 / 112)
@@ -193,17 +220,21 @@ class FaceTools:
             raise ValueError('invalid_aligned_landmarks')
         top, bottom = eye_mid[1] - 0.85 * depth, mouth_mid[1] + 0.8 * depth
         center = np.array([(eye_mid[0] + mouth_mid[0]) / 2, (top + bottom) / 2])
-        radii = np.array([1.05 * eye_span, (bottom - top) / 2])
+        radii = np.array([1.05 * eye_span, (bottom - top) / 2]) * mask_scale
         inverse = cv2.invertAffineTransform(matrix)
         holes = [(point, np.array([0.24, 0.12]) * eye_span) for point in points[:2]]
         holes.append((mouth_mid + [0, 0.08 * eye_span],
-                      np.array([np.linalg.norm(points[4] - points[3]) / 2 + 0.12 * eye_span,
-                                0.24 * eye_span])))
+                       np.array([np.linalg.norm(points[4] - points[3]) / 2 + 0.12 * eye_span,
+                                 0.24 * eye_span])))
+        holes = [(point, axes * feature_protection) for point, axes in holes] if feature_protection > 0 else []
 
-        def mask_at(x, y):
-            radius = np.sqrt(((x - center[0]) / radii[0]) ** 2 + ((y - center[1]) / radii[1]) ** 2)
-            alpha = _smoothstep((1 - radius) / 0.18)
-            for point, axes in holes:
+        def mask_at(x, y, protect_features=True, ellipse=True):
+            if ellipse:
+                radius = np.sqrt(((x - center[0]) / radii[0]) ** 2 + ((y - center[1]) / radii[1]) ** 2)
+                alpha = _smoothstep((1 - radius) / 0.18)
+            else:
+                alpha = np.ones_like(x + y, dtype=float)
+            for point, axes in holes if protect_features and ellipse else []:
                 distance = np.sqrt(((x - point[0]) / axes[0]) ** 2 + ((y - point[1]) / axes[1]) ** 2)
                 alpha *= _smoothstep((distance - 1) / 0.35)
             sx = inverse[0, 0] * x + inverse[0, 1] * y + inverse[0, 2]
@@ -219,24 +250,59 @@ class FaceTools:
 
         y, x = np.ogrid[:512, :512]
         mask = mask_at(x, y)
+        generation_mask = mask if generation_mask_mode == 'protected' else mask_at(x, y, protect_features=False)
         height, width = rgb.shape[:2]
+        generation_source = source_generation_mask if source_generation_mask is not None else source_edit_mask
+        if source_edit_mask is not None or generation_source is not None:
+            safe_crop = mask_at(x, y, ellipse=False)
+            if source_edit_mask is not None:
+                mask = np.minimum(cv2.warpAffine(np.asarray(source_edit_mask), matrix, (512, 512)), safe_crop)
+            if generation_source is not None:
+                generation_mask = np.minimum(cv2.warpAffine(np.asarray(generation_source), matrix, (512, 512)), safe_crop)
+        guard_radius = 0
+        if source_protect_mask is not None:
+            # Dilate in source space before sampling so even sub-crop-pixel marks
+            # survive downscaling; include the full inverse crop-pixel footprint.
+            guard_radius = max(1, int(np.ceil(np.abs(inverse[:, :2]).sum(axis=1).max())))
+            protected = (np.asarray(source_protect_mask) > 0).astype(np.uint8) * 255
+            guard = cv2.dilate(protected, np.ones((2 * guard_radius + 1, 2 * guard_radius + 1), np.uint8))
+            guard = cv2.warpAffine(guard, matrix, (512, 512)) > 0
+            mask = np.where(guard, 0, mask).astype(np.uint8)
+            generation_mask = np.where(guard, 0, generation_mask).astype(np.uint8)
         source_mask = cv2.warpAffine(mask, matrix, (width, height),
                                      flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
                                      borderMode=cv2.BORDER_CONSTANT)
         y, x = np.ogrid[:height, :width]
         # Interpolation must not leak even one pixel into the outside or holes.
         source_mask = np.minimum(source_mask, mask_at(matrix[0, 0] * x + matrix[0, 1] * y + matrix[0, 2],
-                                                     matrix[1, 0] * x + matrix[1, 1] * y + matrix[1, 2]))
+                                                     matrix[1, 0] * x + matrix[1, 1] * y + matrix[1, 2],
+                                                     ellipse=source_edit_mask is None))
+        if source_edit_mask is not None:
+            source_mask = np.minimum(source_mask, np.asarray(source_edit_mask))
+        if source_protect_mask is not None:
+            source_mask[protected > 0] = 0
         if not source_mask.any():
             raise FaceNotFoundError('empty_face_edit_mask')
+        if not generation_mask.any():
+            raise FaceNotFoundError('empty_face_generation_mask')
         info = dict(face.selection_info)
-        info['mask_geometry'] = {'kind': 'compact_ellipse_with_protected_eyes_and_mouth',
+        info['mask_geometry'] = {'kind': ('source_edit_mask' if source_edit_mask is not None else
+                                         'compact_ellipse_with_protected_eyes_and_mouth' if holes else 'compact_ellipse'),
                                  'center': center.tolist(), 'radii': radii.tolist(),
                                  'protected_features': [{'center': point.tolist(), 'radii': axes.tolist()}
-                                                        for point, axes in holes],
-                                 'semantic_segmentation': False}
+                                                         for point, axes in holes] if source_edit_mask is None else [],
+                                 'generation_mask_mode': generation_mask_mode, 'mask_scale': mask_scale,
+                                  'feature_protection': feature_protection,
+                                  'semantic_segmentation': False}
+        info['mask_geometry'].update(
+            blend_origin='source_edit_mask' if source_edit_mask is not None else 'geometry',
+            generation_origin=('source_generation_mask' if source_generation_mask is not None else
+                               'source_edit_mask' if source_edit_mask is not None else 'geometry'),
+            protection_origin='source_protect_mask' if source_protect_mask is not None else None,
+            selected_bbox_guard=True, other_face_guards=True, exact_source_zero_guard=True,
+            protection_source_dilation=guard_radius)
         return FaceEdit(Image.fromarray(rgb.copy()), Image.fromarray(crop), Image.fromarray(mask),
-                        matrix, face, Image.fromarray(source_mask), info)
+                        matrix, face, Image.fromarray(source_mask), info, Image.fromarray(generation_mask.copy()))
 
     def finish_edit(self, edit, generated):
         """Inverse-warp generated pixels, never the original, then blend locally."""

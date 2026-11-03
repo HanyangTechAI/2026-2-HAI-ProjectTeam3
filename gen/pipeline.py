@@ -7,7 +7,7 @@ import argparse
 from dataclasses import dataclass
 import json
 import math
-from numbers import Integral
+from numbers import Integral, Real
 from pathlib import Path
 import time
 
@@ -83,6 +83,12 @@ class PipelineConfig:
     faceid_lora_scale: float = 1.0
     age_lora_scale: float = 1.0
     preserve_background: bool = True
+    shortcut_scale: float = 1.0
+    prompt_style: str = 'group'
+    masked_denoising: bool = True
+    generation_mask_mode: str = 'protected'
+    mask_scale: float = 1.0
+    feature_protection: float = 1.0
 
     def __post_init__(self):
         if self.device not in ('cpu', 'cuda'):
@@ -99,6 +105,19 @@ class PipelineConfig:
             raise ValueError('adapter scales must be finite and nonnegative')
         if not isinstance(self.preserve_background, bool):
             raise ValueError('preserve_background must be a boolean')
+        if (isinstance(self.shortcut_scale, bool) or not isinstance(self.shortcut_scale, Real)
+                or not math.isfinite(self.shortcut_scale) or self.shortcut_scale < 0):
+            raise ValueError('shortcut_scale must be finite and nonnegative')
+        if self.prompt_style not in ('group', 'numeric'):
+            raise ValueError('prompt_style must be group or numeric')
+        if not isinstance(self.masked_denoising, bool):
+            raise ValueError('masked_denoising must be a boolean')
+        if self.generation_mask_mode not in ('protected', 'face'):
+            raise ValueError('generation_mask_mode must be protected or face')
+        for name, value, lower, upper in (('mask_scale', self.mask_scale, 1, 1.25),
+                                          ('feature_protection', self.feature_protection, 0, 1)):
+            if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value) or not lower <= value <= upper:
+                raise ValueError(f'{name} must be finite and in {lower}..{upper}')
 
 
 class AgeShiftPipeline:
@@ -142,7 +161,8 @@ class AgeShiftPipeline:
                     cfg.image_encoder, local_files_only=True)
             # The pinned Diffusers inpaint pipeline supports the existing 4-channel
             # UNet and restores unmasked latents at each denoising step.
-            pipeline_class = StableDiffusionInpaintPipeline if cfg.preserve_background else StableDiffusionImg2ImgPipeline
+            pipeline_class = (StableDiffusionInpaintPipeline if cfg.preserve_background and cfg.masked_denoising
+                              else StableDiffusionImg2ImgPipeline)
             pipe = pipeline_class.from_pretrained(cfg.base_model, **kwargs)
             pipe.scheduler = DPMSolverMultistepScheduler.from_config(
                 pipe.scheduler.config, algorithm_type='dpmsolver++', solver_order=2, use_karras_sigmas=True)
@@ -174,7 +194,7 @@ class AgeShiftPipeline:
                 pipe.set_adapters(names, adapter_weights=scales)
                 projection = pipe.unet.encoder_hid_proj.image_projection_layers[0]
                 projection.shortcut = True
-                projection.shortcut_scale = 1.0
+                projection.shortcut_scale = cfg.shortcut_scale
             self._pipe, self._faces = pipe.to(cfg.device), faces
         except ImportError as e:
             raise ModelUnavailableError('Real generation needs requirements-generation.txt; no automatic mock fallback') from e
@@ -186,17 +206,38 @@ class AgeShiftPipeline:
             raise GenerationError(f'Model loading failed: {e}') from e
         return self
 
-    def age_shift(self, image, targets, gender='unknown', seed=None):
+    def age_shift(self, image, targets, gender='unknown', seed=None, *, diagnostics=None,
+                  source_edit_mask=None, source_generation_mask=None, source_protect_mask=None,
+                  negative_prompt=None):
+        """Edit targets; optional diagnostics receives independent raw/output snapshots.
+
+        The callback runs once per successful target. Its edit is the shared edit
+        geometry and must be treated as read-only. Nothing is retained on self.
+        Source masks are original-size PIL L images (see FaceTools.prepare_edit).
+        Overrides require preserve_background=True. None keeps the default
+        negative prompt; an empty string explicitly disables negative text.
+        """
         image, targets = as_rgb(image), validate_targets(targets)
         seed = self.config.seed if seed is None else seed
         if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed < 2**63:
             raise ValueError('seed must be an integer in 0..2**63-1')
+        if diagnostics is not None and not callable(diagnostics):
+            raise ValueError('diagnostics must be callable or None')
+        if negative_prompt is not None and not isinstance(negative_prompt, str):
+            raise ValueError('negative_prompt must be a string or None')
+        masks = {name: value for name, value in (
+            ('source_edit_mask', source_edit_mask), ('source_generation_mask', source_generation_mask),
+            ('source_protect_mask', source_protect_mask)) if value is not None}
+        if not self.config.preserve_background and (masks or negative_prompt is not None):
+            raise ValueError('source masks and negative_prompt overrides require preserve_background=True')
         age_prompt(targets[0], gender)
         self.load()
         try:
             import torch
             cfg, pipe = self.config, self._pipe
-            edit = self._faces.prepare_edit(image) if cfg.preserve_background else None
+            edit = self._faces.prepare_edit(
+                image, generation_mask_mode=cfg.generation_mask_mode, mask_scale=cfg.mask_scale,
+                feature_protection=cfg.feature_protection, **masks) if cfg.preserve_background else None
             if edit is not None:
                 crop = edit.crop
                 detected_gender = 'male' if edit.face.gender == 1 else 'female'
@@ -205,9 +246,24 @@ class AgeShiftPipeline:
             gender = detected_gender if gender == 'unknown' else gender
             conditioning = {}
             if edit is not None:
-                conditioning.update(mask_image=edit.mask,
-                                    negative_prompt='deformed face, distorted anatomy, blurry, waxy skin')
+                conditioning['negative_prompt'] = ('deformed face, distorted anatomy, blurry, waxy skin'
+                                                   if negative_prompt is None else negative_prompt)
+                if cfg.masked_denoising:
+                    conditioning['mask_image'] = edit.generation_mask if edit.generation_mask is not None else edit.mask
             with torch.inference_mode():
+                if diagnostics is not None:
+                    generation_mask = conditioning.get('mask_image')
+                    latent_mask = None
+                    if generation_mask is not None:
+                        # Match pinned Diffusers 0.35.1 __call__ defaults and
+                        # prepare_mask_latents, without VAE work or RNG consumption.
+                        size = pipe.unet.config.sample_size * pipe.vae_scale_factor
+                        processed = pipe.mask_processor.preprocess(
+                            generation_mask, height=size, width=size, resize_mode='default', crops_coords=None)
+                        latent = torch.nn.functional.interpolate(
+                            processed, size=(size // pipe.vae_scale_factor, size // pipe.vae_scale_factor),
+                            mode='nearest')
+                        latent_mask = Image.fromarray((latent[0, 0] * 255).round().to(torch.uint8).cpu().numpy())
                 if self.mode != 'prompt_only':
                     embedding = torch.tensor(self._faces.embedding(edit if edit is not None else image),
                                              device=cfg.device, dtype=pipe.dtype)
@@ -218,8 +274,11 @@ class AgeShiftPipeline:
                     pipe.unet.encoder_hid_proj.image_projection_layers[0].clip_embeds = clip.to(dtype=pipe.dtype)
                 images = []
                 for target in targets:
+                    prompt = age_prompt(target, gender)
+                    if cfg.prompt_style == 'numeric':
+                        prompt += f', {target} years old'
                     # Recreate the same seed for each age, not a shared advancing generator.
-                    result = pipe(prompt=age_prompt(target, gender), image=crop,
+                    result = pipe(prompt=prompt, image=crop,
                                   strength=cfg.strength, num_inference_steps=cfg.steps,
                                   guidance_scale=cfg.guidance_scale,
                                   generator=torch.Generator(device=cfg.device).manual_seed(seed),
@@ -229,7 +288,13 @@ class AgeShiftPipeline:
                     if len(result.images) != 1 or not isinstance(result.images[0], Image.Image):
                         raise GenerationError('Expected one generated PIL image per target')
                     generated = result.images[0].convert('RGB')
-                    images.append(self._faces.finish_edit(edit, generated) if edit is not None else generated)
+                    output = self._faces.finish_edit(edit, generated) if edit is not None else generated
+                    images.append(output)
+                    if diagnostics is not None:
+                        diagnostics(dict(target=target, seed=seed, prompt=prompt, edit=edit,
+                                         generation_mask=generation_mask.copy() if generation_mask is not None else None,
+                                         latent_mask=latent_mask.copy() if latent_mask is not None else None,
+                                         raw=generated.copy(), output=output.copy()))
                 return images
         except GenerationError:
             raise

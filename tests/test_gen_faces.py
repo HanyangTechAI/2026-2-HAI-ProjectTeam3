@@ -1,5 +1,6 @@
 """CPU geometry/selection contracts; fake detections are not model-quality evidence."""
 from dataclasses import replace
+import hashlib
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -211,6 +212,252 @@ class FaceToolsTests(unittest.TestCase):
             self.assertFalse(source[py - 2:py + 3, px - 2:px + 3].any())
             np.testing.assert_array_equal(output[py - 2:py + 3, px - 2:px + 3],
                                           original[py - 2:py + 3, px - 2:px + 3])
+
+    def test_explicit_defaults_match_implicit_and_generation_mask_is_independent(self):
+        instance = tools([detection()], [])
+        image = textured_image()
+        implicit = instance.prepare_edit(image)
+        explicit = instance.prepare_edit(image, generation_mask_mode='protected', mask_scale=1.0,
+                                         feature_protection=1.0)
+        for field in ('crop', 'mask', 'source_mask', 'generation_mask'):
+            self.assertEqual(getattr(implicit, field).tobytes(), getattr(explicit, field).tobytes())
+        self.assertEqual(implicit.generation_mask.tobytes(), implicit.mask.tobytes())
+        implicit.generation_mask.paste(255, (0, 0, 512, 512))
+        self.assertEqual(implicit.mask.tobytes(), explicit.mask.tobytes())
+        legacy = FaceEdit(explicit.original, explicit.crop, explicit.mask, explicit.matrix,
+                          explicit.face, explicit.source_mask, explicit.selection_info)
+        self.assertIsNone(legacy.generation_mask)
+        generated = Image.new('RGB', (512, 512), 'white')
+        self.assertEqual(instance.finish_edit(legacy, generated).tobytes(),
+                         instance.finish_edit(explicit, generated).tobytes())
+
+    def test_face_generation_fills_feature_holes_but_does_not_change_composition(self):
+        instance = tools([detection()], [])
+        image = textured_image()
+        protected = instance.prepare_edit(image)
+        face = instance.prepare_edit(image, generation_mask_mode='face')
+        self.assertEqual(face.mask.tobytes(), protected.mask.tobytes())
+        self.assertEqual(face.source_mask.tobytes(), protected.source_mask.tobytes())
+        generation, composite = np.asarray(face.generation_mask), np.asarray(face.mask)
+        self.assertTrue((generation >= composite).all())
+        self.assertTrue((generation > composite).any())
+        for feature in face.selection_info['mask_geometry']['protected_features']:
+            x, y = np.rint(feature['center']).astype(int)
+            self.assertEqual(composite[y, x], 0)
+            self.assertGreater(generation[y, x], 0)
+        generated = Image.new('RGB', (512, 512), 'white')
+        self.assertEqual(instance.finish_edit(face, generated).tobytes(),
+                         instance.finish_edit(protected, generated).tobytes())
+
+    def test_mask_scale_and_feature_protection_are_monotonic_with_exact_zero_support(self):
+        instance = tools([detection()], [])
+        image = textured_image()
+        default = instance.prepare_edit(image)
+        expanded = instance.prepare_edit(image, mask_scale=1.25)
+        reduced = instance.prepare_edit(image, feature_protection=.5)
+        unprotected = instance.prepare_edit(image, feature_protection=0)
+        self.assertTrue((np.asarray(expanded.mask) >= np.asarray(default.mask)).all())
+        self.assertTrue((np.asarray(reduced.mask) >= np.asarray(default.mask)).all())
+        self.assertTrue((np.asarray(unprotected.mask) >= np.asarray(reduced.mask)).all())
+        self.assertGreater(np.asarray(expanded.mask).sum(), np.asarray(default.mask).sum())
+        self.assertGreater(np.asarray(reduced.mask).sum(), np.asarray(default.mask).sum())
+        self.assertGreater(np.asarray(unprotected.mask).sum(), np.asarray(reduced.mask).sum())
+        for full, half in zip(default.selection_info['mask_geometry']['protected_features'],
+                              reduced.selection_info['mask_geometry']['protected_features']):
+            np.testing.assert_array_equal(np.asarray(half['radii']), np.asarray(full['radii']) * .5)
+        self.assertEqual(unprotected.selection_info['mask_geometry']['protected_features'], [])
+        for edit in (expanded, reduced, unprotected):
+            output = np.asarray(instance.finish_edit(edit, Image.new('RGB', (512, 512), 'white')))
+            mask = np.asarray(edit.source_mask)
+            np.testing.assert_array_equal(output[mask == 0], np.asarray(image)[mask == 0])
+            x1, y1, x2, y2 = edit.face.bbox.astype(int)
+            self.assertFalse(mask[:y1 + 1].any())
+            self.assertFalse(mask[y2:].any())
+            self.assertFalse(mask[:, :x1 + 1].any())
+            self.assertFalse(mask[:, x2:].any())
+
+    def test_relaxed_generation_still_guards_other_faces_and_primary_bbox(self):
+        primary, tiny = detection(), detection((255, 275, 272, 292), score=.95)
+        image = textured_image()
+        instance = tools([primary, tiny], [primary])
+        edit = instance.prepare_edit(image, generation_mask_mode='face', mask_scale=1.25, feature_protection=0)
+        inverse = cv2.invertAffineTransform(edit.matrix)
+        y, x = np.ogrid[:512, :512]
+        sx = inverse[0, 0] * x + inverse[0, 1] * y + inverse[0, 2]
+        sy = inverse[1, 0] * x + inverse[1, 1] * y + inverse[1, 2]
+        x1, y1, x2, y2 = edit.face.bbox
+        outside = (sx <= x1) | (sx >= x2) | (sy <= y1) | (sy >= y2)
+        other = (sx >= 255) & (sx <= 272) & (sy >= 275) & (sy <= 292)
+        self.assertTrue(other.any())
+        for mask in (edit.mask, edit.generation_mask):
+            self.assertFalse(np.asarray(mask)[outside | other].any())
+        self.assertFalse(np.asarray(edit.source_mask)[275:292, 255:272].any())
+        output = np.asarray(instance.finish_edit(edit, Image.new('RGB', (512, 512), 'white')))
+        source_mask = np.asarray(edit.source_mask)
+        np.testing.assert_array_equal(output[source_mask == 0], np.asarray(image)[source_mask == 0])
+
+    def test_mask_controls_reject_invalid_values_before_detection(self):
+        instance = tools([detection()], [])
+        for values in ({'generation_mask_mode': 'all'}, {'mask_scale': 0}, {'mask_scale': 1.251},
+                       {'mask_scale': float('nan')}, {'mask_scale': True}, {'mask_scale': '1'},
+                       {'feature_protection': -.1}, {'feature_protection': 1.01},
+                       {'feature_protection': float('inf')}, {'feature_protection': None}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                instance.prepare_edit(textured_image(), **values)
+        instance.aligner.detector.detect.assert_not_called()
+
+    def test_default_fixture_bytes_remain_identical(self):
+        instance = tools([detection()], [])
+        edit = instance.prepare_edit(textured_image())
+        expected = {
+            'crop': '3ca5575ff998ee6879ec145e0504d67f950c5764ac558c0c52d19abb49746fbc',
+            'mask': 'b815405df319226ea34597914f33941789584f57c36dae5471b842bdfe8696be',
+            'source_mask': '3bbef2bd04e218dd2b1bbd5fcf954863cdb38b9868f202fdd7d996a3f46740f4',
+            'output': 'd64b89a18b735262b401ba098b512d923efd3f959e882ba449a684fb83da3598',
+        }
+        actual = {name: getattr(edit, name) for name in ('crop', 'mask', 'source_mask')}
+        actual['output'] = instance.finish_edit(edit, Image.new('RGB', (512, 512), 'white'))
+        self.assertEqual({name: hashlib.sha256(value.tobytes()).hexdigest() for name, value in actual.items()}, expected)
+
+    def test_external_mask_validation_is_strict_and_precedes_detection(self):
+        instance = tools([detection()], [])
+        image = textured_image(600, 512)
+        for name in ('source_edit_mask', 'source_generation_mask', 'source_protect_mask'):
+            for invalid in (False, np.ones((512, 600), np.uint8), Image.new('RGB', image.size),
+                            Image.new('1', image.size), Image.new('F', image.size),
+                            Image.new('L', (512, 600)), Image.new('L', (512, 512))):
+                with self.subTest(name=name, mode=getattr(invalid, 'mode', None)), self.assertRaisesRegex(ValueError, name):
+                    instance.prepare_edit(image, **{name: invalid})
+        for name in ('source_edit_mask', 'source_generation_mask'):
+            with self.assertRaisesRegex(ValueError, 'nonempty'):
+                instance.prepare_edit(image, **{name: Image.new('L', image.size)})
+        instance.aligner.detector.detect.assert_not_called()
+
+    def test_external_edit_replaces_holes_and_ellipse_and_drives_generation(self):
+        instance = tools([detection()], [])
+        image = textured_image()
+        original = instance.prepare_edit(image)
+        supplied = Image.new('L', image.size, 255)
+        before = supplied.tobytes()
+        for mode in ('protected', 'face'):
+            edit = instance.prepare_edit(image, source_edit_mask=supplied, generation_mask_mode=mode)
+            self.assertEqual(edit.mask.tobytes(), edit.generation_mask.tobytes())
+            self.assertTrue(((np.asarray(original.mask) == 0) & (np.asarray(edit.mask) > 0)).any())
+            for feature in original.selection_info['mask_geometry']['protected_features']:
+                x, y = np.rint(feature['center']).astype(int)
+                self.assertGreater(edit.mask.getpixel((x, y)), 0)
+            metadata = edit.selection_info['mask_geometry']
+            self.assertEqual(metadata['blend_origin'], 'source_edit_mask')
+            self.assertEqual(metadata['generation_origin'], 'source_edit_mask')
+            self.assertEqual(metadata['kind'], 'source_edit_mask')
+        self.assertEqual(supplied.tobytes(), before)
+
+    def test_external_generation_and_blend_support_are_independent(self):
+        instance = tools([detection()], [])
+        image = textured_image()
+        blend, generation = Image.new('L', image.size), Image.new('L', image.size)
+        blend.paste(192, (180, 180, 250, 340))
+        generation.paste(255, (280, 180, 340, 340))
+        edit = instance.prepare_edit(image, source_edit_mask=blend, source_generation_mask=generation)
+        self.assertFalse((np.asarray(edit.mask) * np.asarray(edit.generation_mask).astype(int)).any())
+        self.assertTrue(np.asarray(edit.mask).any())
+        self.assertTrue(np.asarray(edit.generation_mask).any())
+        source = np.asarray(edit.source_mask)
+        self.assertTrue((source <= np.asarray(blend)).all())
+        output = np.asarray(instance.finish_edit(edit, Image.new('RGB', (512, 512), 'white')))
+        np.testing.assert_array_equal(output[np.asarray(blend) == 0], np.asarray(image)[np.asarray(blend) == 0])
+        default = instance.prepare_edit(image)
+        generation_only = instance.prepare_edit(image, source_generation_mask=generation)
+        self.assertEqual(generation_only.mask.tobytes(), default.mask.tobytes())
+        self.assertEqual(generation_only.source_mask.tobytes(), default.source_mask.tobytes())
+        self.assertEqual(edit.selection_info['mask_geometry']['generation_origin'], 'source_generation_mask')
+
+    def test_external_masks_cannot_cross_bbox_or_other_face_guards(self):
+        instance = tools([detection(), detection((255, 275, 272, 292), score=.95)], [])
+        image = textured_image()
+        edit = instance.prepare_edit(image, source_edit_mask=Image.new('L', image.size, 255),
+                                     source_generation_mask=Image.new('L', image.size, 255))
+        inverse = cv2.invertAffineTransform(edit.matrix)
+        y, x = np.ogrid[:512, :512]
+        sx = inverse[0, 0] * x + inverse[0, 1] * y + inverse[0, 2]
+        sy = inverse[1, 0] * x + inverse[1, 1] * y + inverse[1, 2]
+        unsafe = (sx <= 150) | (sx >= 370) | (sy <= 90) | (sy >= 430)
+        unsafe |= (sx >= 255) & (sx <= 272) & (sy >= 275) & (sy <= 292)
+        for mask in (edit.mask, edit.generation_mask):
+            self.assertFalse(np.asarray(mask)[unsafe].any())
+        source = np.asarray(edit.source_mask)
+        self.assertFalse(source[275:293, 255:273].any())
+        self.assertFalse(source[:91].any())
+        self.assertFalse(source[430:].any())
+        self.assertFalse(source[:, :151].any())
+        self.assertFalse(source[:, 370:].any())
+
+    def test_protection_outside_blend_support_still_excludes_generation(self):
+        instance = tools([detection()], [])
+        image = textured_image()
+        blend = Image.new('L', image.size)
+        blend.paste(255, (180, 180, 235, 330))
+        generation = Image.new('L', image.size, 255)
+        protection = Image.new('L', image.size)
+        protection.paste(1, (280, 270, 315, 300))
+        baseline = instance.prepare_edit(image, source_edit_mask=blend, source_generation_mask=generation)
+        edit = instance.prepare_edit(image, source_edit_mask=blend, source_generation_mask=generation,
+                                     source_protect_mask=protection)
+        self.assertEqual(edit.mask.tobytes(), baseline.mask.tobytes())
+        self.assertEqual(edit.source_mask.tobytes(), baseline.source_mask.tobytes())
+        x, y = np.rint(edit.matrix[:, :2] @ [295, 285] + edit.matrix[:, 2]).astype(int)
+        self.assertEqual(edit.mask.getpixel((x, y)), 0)
+        self.assertGreater(baseline.generation_mask.getpixel((x, y)), 0)
+        self.assertEqual(edit.generation_mask.getpixel((x, y)), 0)
+        self.assertEqual(edit.selection_info['mask_geometry']['protection_origin'], 'source_protect_mask')
+
+    def test_protection_is_independent_hard_nonzero_and_conservative_when_rotated(self):
+        angle = np.deg2rad(23)
+        rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+        points = (TEMPLATE - [56, 70]) @ rotation.T * 5 + [600, 450]
+        corners = (np.array([[18, 14], [94, 14], [94, 118], [18, 118]]) - [56, 70]) @ rotation.T * 5 + [600, 450]
+        instance = tools([detection(np.r_[corners.min(axis=0), corners.max(axis=0)], kps=points)], [])
+        image = textured_image(1606, 954)
+        protect = Image.new('L', image.size)
+        px, py = np.rint(points[2]).astype(int)
+        protect.putpixel((px, py), 1)
+        before = protect.tobytes()
+        for custom in (False, True):
+            kwargs = {'source_edit_mask': Image.new('L', image.size, 255),
+                      'source_generation_mask': Image.new('L', image.size, 255)} if custom else {}
+            base = instance.prepare_edit(image, **kwargs)
+            edit = instance.prepare_edit(image, source_protect_mask=protect, **kwargs)
+            cx, cy = edit.matrix[:, :2] @ [px, py] + edit.matrix[:, 2]
+            # Every crop texel participating in the inverse bilinear sample is protected.
+            for x in (int(np.floor(cx)), int(np.ceil(cx))):
+                for y in (int(np.floor(cy)), int(np.ceil(cy))):
+                    self.assertGreater(base.generation_mask.getpixel((x, y)), 0)
+                    self.assertEqual(edit.mask.getpixel((x, y)), 0)
+                    self.assertEqual(edit.generation_mask.getpixel((x, y)), 0)
+            self.assertEqual(edit.source_mask.getpixel((px, py)), 0)
+            output = instance.finish_edit(edit, Image.new('RGB', (512, 512), 'white'))
+            self.assertEqual(output.getpixel((px, py)), image.getpixel((px, py)))
+            self.assertGreater(edit.selection_info['mask_geometry']['protection_source_dilation'], 1)
+            full = protect.point(lambda value: 255 if value else 0)
+            self.assertEqual(instance.prepare_edit(image, source_protect_mask=full, **kwargs).mask.tobytes(),
+                             edit.mask.tobytes())
+        self.assertEqual(protect.tobytes(), before)
+
+    def test_empty_effective_edit_or_generation_is_rejected_and_empty_protect_is_valid(self):
+        instance = tools([detection()], [])
+        image = textured_image()
+        outside = Image.new('L', image.size)
+        outside.paste(255, (0, 0, 20, 20))
+        for name, reason in (('source_edit_mask', 'empty_face_edit_mask'),
+                             ('source_generation_mask', 'empty_face_generation_mask')):
+            with self.assertRaisesRegex(FaceNotFoundError, reason):
+                instance.prepare_edit(image, **{name: outside})
+        with self.assertRaisesRegex(FaceNotFoundError, 'empty_face_edit_mask'):
+            instance.prepare_edit(image, source_protect_mask=Image.new('L', image.size, 1))
+        default = instance.prepare_edit(image)
+        no_protect = instance.prepare_edit(image, source_protect_mask=Image.new('L', image.size))
+        for name in ('mask', 'generation_mask', 'source_mask'):
+            self.assertEqual(getattr(default, name).tobytes(), getattr(no_protect, name).tobytes())
 
     def test_adjacent_clipped_person_is_protected_even_if_unselectable(self):
         primary = detection()

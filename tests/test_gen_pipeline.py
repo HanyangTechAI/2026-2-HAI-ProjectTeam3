@@ -41,9 +41,9 @@ def fake_runtime(automatic=True):
         pipe.return_value = SimpleNamespace(images=[Image.new('RGB', (512, 512), 'blue')], nsfw_content_detected=None)
         faces = Mock()
         faces.prepare.return_value = (Image.new('RGB', (512, 512)), 'female')
-        faces.prepare_edit.side_effect = lambda image: SimpleNamespace(
+        faces.prepare_edit.side_effect = lambda image, **kwargs: SimpleNamespace(
             original=image, crop=Image.new('RGB', (512, 512)),
-            mask=Image.new('L', (512, 512), 255), face=SimpleNamespace(gender=0))
+            mask=Image.new('L', (512, 512), 255), generation_mask=None, face=SimpleNamespace(gender=0))
         faces.finish_edit.side_effect = lambda edit, generated: generated.resize(edit.original.size)
         faces.embedding.return_value = [1.0] + [0.0] * 511
         torch = ModuleType('torch')
@@ -111,9 +111,21 @@ class PipelineContracts(unittest.TestCase):
     def test_config_validation(self):
         for values in ({'steps': 0}, {'strength': float('nan')}, {'steps': 1, 'strength': .1},
                        {'guidance_scale': 1}, {'age_lora_scale': -1}, {'device': 'magic'}, {'seed': -1},
-                       {'preserve_background': 'true'}):
+                       {'preserve_background': 'true'}, {'masked_denoising': 1},
+                       {'prompt_style': 'exact'}, {'generation_mask_mode': 'all'}):
             with self.assertRaises(ValueError):
                 PipelineConfig(**values)
+        for name, invalid in (('shortcut_scale', [-1, float('inf'), float('nan'), True, '1', None]),
+                              ('mask_scale', [0, .99, 1.26, float('nan'), True, '1', None]),
+                              ('feature_protection', [-.01, 1.01, float('inf'), True, '1', None])):
+            for value in invalid:
+                with self.subTest(name=name, value=value), self.assertRaises(ValueError):
+                    PipelineConfig(**{name: value})
+        config = PipelineConfig()
+        self.assertEqual((config.shortcut_scale, config.prompt_style, config.masked_denoising,
+                          config.generation_mask_mode, config.mask_scale, config.feature_protection),
+                         (1.0, 'group', True, 'protected', 1.0, 1.0))
+        PipelineConfig(shortcut_scale=0, mask_scale=1.25, feature_protection=0)
 
     def test_missing_real_assets_never_fall_back_to_mock(self):
         pipeline = AgeShiftPipeline(PipelineConfig())
@@ -160,6 +172,7 @@ class PipelineContracts(unittest.TestCase):
             rt.pipe.set_adapters.assert_called_once_with(['faceid_0'], adapter_weights=[1.0])
             rt.pipe.load_lora_weights.assert_not_called()
             self.assertTrue(rt.projection.shortcut)
+            self.assertEqual(rt.projection.shortcut_scale, 1.0)
             pipeline.age_shift(Image.new('RGB', (64, 64)), [35])
             rt.tensor.reshape.assert_called_once_with(1, 1, 1, -1)
             self.assertEqual(len(rt.pipe.call_args.kwargs['ip_adapter_image_embeds']), 1)
@@ -173,6 +186,28 @@ class PipelineContracts(unittest.TestCase):
             rt.pipe.load_lora_weights.assert_called_once()
             self.assertEqual(rt.pipe.load_lora_weights.call_args.kwargs['adapter_name'], 'age')
             rt.pipe.set_adapters.assert_called_once_with(['faceid_0', 'age'], adapter_weights=[.7, .9])
+
+    def test_shortcut_scale_is_separate_from_image_attention_scale(self):
+        for scale in (0, .25, 1.5):
+            with self.subTest(scale=scale), fake_runtime() as rt:
+                AgeShiftPipeline(replace(rt.config, shortcut_scale=scale, ip_scale=.6), 'faceid').load()
+                self.assertTrue(rt.projection.shortcut)
+                self.assertEqual(rt.projection.shortcut_scale, scale)
+                rt.pipe.set_ip_adapter_scale.assert_called_once_with(.6)
+
+    def test_numeric_prompt_distinguishes_55_and_65_without_changing_caption_mapping(self):
+        self.assertEqual(age_prompt(55, 'female'), age_prompt(65, 'female'))
+        for style in ('group', 'numeric'):
+            with self.subTest(style=style), fake_runtime() as rt:
+                pipeline = AgeShiftPipeline(replace(rt.config, prompt_style=style), 'prompt_only')
+                pipeline.age_shift(Image.new('RGB', (64, 64)), [55, 65])
+                prompts = [call.kwargs['prompt'] for call in rt.pipe.call_args_list]
+                expected = [age_prompt(age, 'female') + (f', {age} years old' if style == 'numeric' else '')
+                            for age in (55, 65)]
+                self.assertEqual(prompts, expected)
+                self.assertEqual(prompts[0] == prompts[1], style == 'group')
+                rt.pipe.mask_processor.preprocess.assert_not_called()
+                self.assertFalse(any('diagnostic' in key for key in vars(pipeline)))
 
     def test_explicit_faceid_lora_replaces_not_duplicates_automatic_one(self):
         with fake_runtime() as rt:
@@ -202,11 +237,128 @@ class PipelineContracts(unittest.TestCase):
             result = AgeShiftPipeline(rt.config, 'faceid').age_shift(source, [25, 65])
             self.assertEqual([image.size for image in result], [source.size, source.size])
             self.assertEqual(source.tobytes(), before)
-            rt.faces.prepare_edit.assert_called_once_with(source)
+            rt.faces.prepare_edit.assert_called_once_with(
+                source, generation_mask_mode='protected', mask_scale=1.0, feature_protection=1.0)
             rt.faces.prepare.assert_not_called()
             self.assertEqual(rt.faces.finish_edit.call_count, 2)
             self.assertEqual(rt.pipe.call_args.kwargs['mask_image'].mode, 'L')
             self.assertIn('negative_prompt', rt.pipe.call_args.kwargs)
+
+    def test_generation_mask_and_face_controls_are_forwarded_separately(self):
+        with fake_runtime() as rt:
+            source = Image.new('RGB', (320, 240))
+            edit = rt.faces.prepare_edit.side_effect(source)
+            edit.generation_mask = Image.new('L', (512, 512), 192)
+            rt.faces.prepare_edit.side_effect = None
+            rt.faces.prepare_edit.return_value = edit
+            pipeline = AgeShiftPipeline(replace(rt.config, generation_mask_mode='face', mask_scale=1.2,
+                                               feature_protection=.5), 'prompt_only')
+            pipeline.age_shift(source, [25])
+            rt.faces.prepare_edit.assert_called_once_with(
+                source, generation_mask_mode='face', mask_scale=1.2, feature_protection=.5)
+            self.assertIs(rt.pipe.call_args.kwargs['mask_image'], edit.generation_mask)
+            self.assertIs(rt.faces.finish_edit.call_args.args[0], edit)
+            self.assertEqual(edit.mask.getpixel((0, 0)), 255)
+
+    def test_img2img_can_retain_source_composition_and_identical_negative_prompt(self):
+        with fake_runtime() as rt:
+            source = Image.new('RGB', (320, 240), 'red')
+            events = []
+            pipeline = AgeShiftPipeline(replace(rt.config, masked_denoising=False), 'prompt_only')
+            results = pipeline.age_shift(source, [55, 65], seed=9, diagnostics=events.append)
+            rt.diffusers.StableDiffusionImg2ImgPipeline.from_pretrained.assert_called_once()
+            rt.diffusers.StableDiffusionInpaintPipeline.from_pretrained.assert_not_called()
+            self.assertNotIn('mask_image', rt.pipe.call_args.kwargs)
+            self.assertEqual(rt.pipe.call_args.kwargs['negative_prompt'],
+                             'deformed face, distorted anatomy, blurry, waxy skin')
+            self.assertEqual(rt.faces.finish_edit.call_count, 2)
+            rt.pipe.mask_processor.preprocess.assert_not_called()
+            self.assertEqual([event['target'] for event in events], [55, 65])
+            for event, output in zip(events, results):
+                self.assertEqual(set(event), {'target', 'seed', 'prompt', 'edit', 'generation_mask',
+                                             'latent_mask', 'raw', 'output'})
+                self.assertEqual(event['seed'], 9)
+                self.assertIsNotNone(event['edit'])
+                self.assertIsNone(event['generation_mask'])
+                self.assertIsNone(event['latent_mask'])
+                self.assertEqual(event['raw'].size, (512, 512))
+                self.assertEqual(event['output'].size, source.size)
+                event['raw'].putpixel((0, 0), (255, 0, 0))
+                self.assertEqual(event['output'].getpixel((0, 0)), (0, 0, 255))
+                event['output'].putpixel((0, 0), (0, 255, 0))
+                self.assertEqual(output.getpixel((0, 0)), (0, 0, 255))
+
+    def test_external_masks_are_forwarded_only_when_supplied(self):
+        with fake_runtime() as rt:
+            source = Image.new('RGB', (320, 240))
+            masks = {name: Image.new('L', source.size, value) for name, value in
+                     (('source_edit_mask', 255), ('source_generation_mask', 192), ('source_protect_mask', 1))}
+            pipeline = AgeShiftPipeline(rt.config, 'prompt_only')
+            pipeline.age_shift(source, [25], **masks)
+            rt.faces.prepare_edit.assert_called_once_with(
+                source, generation_mask_mode='protected', mask_scale=1.0, feature_protection=1.0, **masks)
+            rt.faces.prepare_edit.reset_mock()
+            pipeline.age_shift(source, [25], source_edit_mask=None, source_generation_mask=None, source_protect_mask=None)
+            rt.faces.prepare_edit.assert_called_once_with(
+                source, generation_mask_mode='protected', mask_scale=1.0, feature_protection=1.0)
+
+    def test_negative_override_preserves_default_empty_string_and_positive_prompts(self):
+        for masked in (False, True):
+            for negative in (None, '', 'eyeglasses, sunglasses'):
+                with self.subTest(masked=masked, negative=negative), fake_runtime() as rt:
+                    pipeline = AgeShiftPipeline(replace(rt.config, masked_denoising=masked), 'prompt_only')
+                    pipeline.age_shift(Image.new('RGB', (320, 240)), [55, 65], negative_prompt=negative)
+                    for call in rt.pipe.call_args_list:
+                        self.assertEqual(call.kwargs['negative_prompt'],
+                                         'deformed face, distorted anatomy, blurry, waxy skin' if negative is None else negative)
+                        self.assertEqual(call.kwargs['prompt'], age_prompt(55, 'female'))
+                    pipeline.age_shift(Image.new('RGB', (320, 240)), [55])
+                    self.assertEqual(rt.pipe.call_args.kwargs['negative_prompt'],
+                                     'deformed face, distorted anatomy, blurry, waxy skin')
+
+    def test_override_validation_rejects_ignored_crop_mode_and_bad_negative_before_load(self):
+        source = Image.new('RGB', (320, 240))
+        pipeline = AgeShiftPipeline(PipelineConfig())
+        for value in (False, 0, [], {}):
+            with self.assertRaisesRegex(ValueError, 'negative_prompt'):
+                pipeline.age_shift(source, [25], negative_prompt=value)
+        self.assertIsNone(pipeline._pipe)
+        crop_pipeline = AgeShiftPipeline(PipelineConfig(preserve_background=False))
+        for kwargs in ({'negative_prompt': ''}, {'negative_prompt': 'glasses'},
+                       *({name: Image.new('L', source.size, 255)} for name in
+                         ('source_edit_mask', 'source_generation_mask', 'source_protect_mask'))):
+            with self.assertRaisesRegex(ValueError, 'preserve_background=True'):
+                crop_pipeline.age_shift(source, [25], **kwargs)
+        self.assertIsNone(crop_pipeline._pipe)
+
+    def test_crop_diagnostics_have_no_edit_or_masks_and_cannot_mutate_results(self):
+        with fake_runtime() as rt:
+            events = []
+            def record(event):
+                event['raw'].putpixel((0, 0), (255, 0, 0))
+                self.assertEqual(event['output'].getpixel((0, 0)), (0, 0, 255))
+                event['output'].putpixel((0, 0), (0, 255, 0))
+                events.append(event)
+            pipeline = AgeShiftPipeline(replace(rt.config, preserve_background=False), 'prompt_only')
+            results = pipeline.age_shift(Image.new('RGB', (320, 240)), [25, 65], diagnostics=record)
+            for event, output in zip(events, results):
+                self.assertIsNone(event['edit'])
+                self.assertIsNone(event['generation_mask'])
+                self.assertIsNone(event['latent_mask'])
+                self.assertEqual(output.getpixel((0, 0)), (0, 0, 255))
+            self.assertNotIn('negative_prompt', rt.pipe.call_args.kwargs)
+
+    def test_diagnostics_validation_and_callback_failures_are_explicit(self):
+        pipeline = AgeShiftPipeline(PipelineConfig())
+        with self.assertRaisesRegex(ValueError, 'diagnostics'):
+            pipeline.age_shift(Image.new('RGB', (64, 64)), [25], diagnostics=True)
+        self.assertIsNone(pipeline._pipe)
+        with fake_runtime() as rt:
+            callback = Mock(side_effect=OSError('diagnostic disk failure'))
+            pipeline = AgeShiftPipeline(replace(rt.config, masked_denoising=False), 'prompt_only')
+            with self.assertRaisesRegex(GenerationError, 'diagnostic disk failure'):
+                pipeline.age_shift(Image.new('RGB', (64, 64)), [25, 65], diagnostics=callback)
+            self.assertEqual(rt.pipe.call_count, 1)
 
     def test_explicit_crop_mode_remains_available_for_existing_callers(self):
         with fake_runtime() as rt:
@@ -224,6 +376,65 @@ class PipelineContracts(unittest.TestCase):
             pipeline = AgeShiftPipeline(rt.config, 'prompt_only').load()
             with self.assertRaisesRegex(GenerationError, 'blocked'):
                 pipeline.age_shift(Image.new('RGB', (64, 64)), [35])
+
+
+class DiffusersMaskContracts(unittest.TestCase):
+    def test_diagnostics_match_real_mask_preprocessing_and_prepare_mask_latents(self):
+        try:
+            import numpy as np
+            import torch
+            from diffusers import StableDiffusionInpaintPipeline
+            from diffusers.image_processor import VaeImageProcessor
+        except ImportError:
+            self.skipTest('Optional CPU torch/diffusers stack is not installed')
+        from gen.faces import FaceEdit
+
+        # Include values on both sides of the actual processor's 0.5 threshold.
+        generation = Image.fromarray(np.tile(np.array([0, 126, 127, 128, 129, 255], dtype=np.uint8), (35, 9)))
+        source = Image.new('RGB', (320, 240), 'red')
+        for latent_size in (32, 64):
+            with self.subTest(latent_size=latent_size):
+                edit = FaceEdit(source, Image.new('RGB', (512, 512)), Image.new('L', (512, 512)),
+                                np.array([[1., 0, 0], [0, 1., 0]]), SimpleNamespace(gender=1),
+                                Image.new('L', source.size), {}, generation.copy())
+                pipe = Mock()
+                pipe.unet = SimpleNamespace(config=SimpleNamespace(sample_size=latent_size))
+                pipe.vae_scale_factor = 8
+                processor = VaeImageProcessor(vae_scale_factor=8, do_normalize=False,
+                                              do_binarize=True, do_convert_grayscale=True)
+                pipe.mask_processor = processor
+                size = latent_size * 8
+                processed = processor.preprocess(generation, height=size, width=size)
+                expected, _ = StableDiffusionInpaintPipeline.prepare_mask_latents(
+                    pipe, processed, torch.zeros(1, 4, latent_size, latent_size), 1, size, size,
+                    torch.float32, torch.device('cpu'), None, True)
+                processor.preprocess = Mock(wraps=processor.preprocess)
+                pipe.return_value = SimpleNamespace(images=[Image.new('RGB', (512, 512), 'blue')])
+                pipeline = AgeShiftPipeline(PipelineConfig(device='cpu', prompt_style='numeric'), 'prompt_only')
+                pipeline._pipe = pipe
+                pipeline._faces = SimpleNamespace(prepare_edit=Mock(return_value=edit),
+                                                  finish_edit=Mock(return_value=source.copy()))
+                events = []
+                def record(event):
+                    events.append(event)
+                    self.assertIs(event['edit'], edit)
+                    self.assertEqual(event['raw'].mode, 'RGB')
+                    self.assertEqual(event['output'].mode, 'RGB')
+                    self.assertEqual(event['generation_mask'].mode, 'L')
+                    self.assertEqual(event['latent_mask'].mode, 'L')
+                    self.assertEqual(event['latent_mask'].size, (latent_size, latent_size))
+                    np.testing.assert_array_equal(np.asarray(event['latent_mask']),
+                                                  (expected[0, 0] * 255).to(torch.uint8).numpy())
+                    event['generation_mask'].paste(0, (0, 0, *generation.size))
+                    event['latent_mask'].paste(0, (0, 0, latent_size, latent_size))
+                result = pipeline.age_shift(source, [55, 65], diagnostics=record)
+                processor.preprocess.assert_called_once_with(
+                    edit.generation_mask, height=size, width=size, resize_mode='default', crops_coords=None)
+                self.assertEqual([event['prompt'] for event in events],
+                                 [age_prompt(age, 'male') + f', {age} years old' for age in (55, 65)])
+                self.assertEqual(edit.generation_mask.tobytes(), generation.tobytes())
+                self.assertEqual(result[0].tobytes(), source.tobytes())
+                self.assertEqual(pipe.call_count, 2)
 
 
 class ModelPreparationContracts(unittest.TestCase):
