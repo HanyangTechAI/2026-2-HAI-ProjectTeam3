@@ -1,4 +1,3 @@
-"""Offline validation/runner contracts. GPU training is a separate real smoke run."""
 import copy
 import hashlib
 import json

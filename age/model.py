@@ -4,10 +4,10 @@ from torch.nn import functional as F
 from torchvision.models import mobilenet_v3_large, MobileNet_V3_Large_Weights
 
 
-def build_model(pretrained=True):
+def build_model(pretrained=True, num_classes=101):
     weights = MobileNet_V3_Large_Weights.IMAGENET1K_V2 if pretrained else None
     model = mobilenet_v3_large(weights=weights)
-    model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, 101)
+    model.classifier[-1] = nn.Linear(model.classifier[-1].in_features, num_classes)
     return model
 
 
@@ -23,7 +23,7 @@ def gaussian_targets(ages, sigma=2.0):
 
 
 def dldl_loss(logits, ages, sigma=2.0, kl_weight=1.0, l1_weight=1.0):
-    # Explicitly KL(target || prediction), matching the execution guide.
+    # KL(target || prediction).
     logits = logits.float()
     kl = F.kl_div(logits.log_softmax(-1), gaussian_targets(ages, sigma), reduction='batchmean')
     l1 = F.l1_loss(expected_age(logits), ages.float())

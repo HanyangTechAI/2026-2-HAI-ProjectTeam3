@@ -1,4 +1,3 @@
-"""CPU-only contracts: similarity candidates are not identities or test-based selection."""
 import copy
 import hashlib
 import json

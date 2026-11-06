@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 import zipfile
+from unittest.mock import Mock, patch
 import torch
 from age.common import target_ages
 from age.common import ROOT
@@ -13,6 +14,7 @@ from age.evaluate import metric_rows
 from age.model import build_model, gaussian_targets, expected_age, dldl_loss
 from age.prep import split_records, source_records, extract_archives
 from age.train import parse_args, select_sources
+from age.train import main as train_main
 
 
 @contextmanager
@@ -124,6 +126,59 @@ class AgeContracts(unittest.TestCase):
         self.assertEqual(tuple(logits.shape), (2, 101))
         dldl_loss(logits, torch.tensor([10., 90.])).backward()
         self.assertTrue(torch.isfinite(model.classifier[-1].weight.grad).all())
+
+    def test_training_records_actual_optimizer_updates(self):
+        from age.common import read_csv
+        torch.set_num_threads(4)
+        for skipped in ([True], [True, False], [False], [False, True]):
+            with self.subTest(skipped=skipped), workspace_temp(self.temp_root) as directory:
+                output = Path(directory)
+                args = parse_args(['--output', str(output), '--device', 'cpu', '--batch-size', '2',
+                                   '--epochs', str(len(skipped)), '--smoke-steps', '1'])
+                dataset = torch.utils.data.TensorDataset(torch.ones(2, 3, 224, 224),
+                                                        torch.tensor([25., 75.]), torch.zeros(2))
+                dataset.rows = [dict(source='synthetic', age=25), dict(source='synthetic', age=75)]
+                scaler = Mock()
+                scaler.scale.side_effect = lambda loss: loss
+                scale = [8.0]
+                decisions = iter(skipped)
+
+                def step(optimizer):
+                    if next(decisions):
+                        scale[0] /= 2
+                    else:
+                        optimizer.step()
+
+                scaler.get_scale.side_effect = lambda: scale[0]
+                scaler.step.side_effect = step
+                scheduler = Mock()
+                scheduler.state_dict.return_value = {}
+                model = build_model(False)
+                with patch('age.train.parse_args', return_value=args), \
+                     patch('age.train.AgeDataset', return_value=dataset), \
+                     patch('age.train.validate_splits'), \
+                     patch('age.train.sha256', return_value='test'), \
+                     patch('age.train.build_model', return_value=model), \
+                     patch('age.train.torch.amp.GradScaler', return_value=scaler), \
+                     patch('age.train.torch.optim.lr_scheduler.CosineAnnealingLR', return_value=scheduler), \
+                     patch('age.train.predict', return_value=[dict(source='synthetic', age=25, prediction=25)]):
+                    if all(skipped):
+                        with self.assertRaisesRegex(RuntimeError, 'No optimizer updates'):
+                            train_main()
+                        self.assertFalse((output / 'best.pt').exists())
+                    else:
+                        train_main()
+                        checkpoint = torch.load(output / 'best.pt', weights_only=False)
+                        self.assertEqual(checkpoint['epoch'], skipped.index(False) + 1)
+                        self.assertEqual(checkpoint['optimizer_steps'], 1)
+                        self.assertTrue(checkpoint['optimizer']['state'])
+                self.assertEqual(scheduler.step.call_count, skipped.count(False))
+                history = [row for row in read_csv(output / 'history.csv')
+                           if row['source'] == 'all' and row['age_group'] == 'all']
+                self.assertEqual([int(row['optimizer_steps']) for row in history],
+                                 [int(not value) for value in skipped])
+                self.assertEqual([int(row['amp_skipped_steps']) for row in history],
+                                 [int(value) for value in skipped])
 
 
 if __name__ == '__main__':

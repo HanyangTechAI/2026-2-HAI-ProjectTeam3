@@ -1,4 +1,4 @@
-"""Synthetic engineering verification ONLY; never a performance experiment."""
+"""Synthetic engineering checks, not a performance experiment."""
 import argparse
 from pathlib import Path
 import subprocess

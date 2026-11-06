@@ -1,4 +1,4 @@
-"""Render recorded diagnostics without running models or claiming human review."""
+"""Render recorded diagnostics without running models."""
 import argparse
 from collections import defaultdict
 import json

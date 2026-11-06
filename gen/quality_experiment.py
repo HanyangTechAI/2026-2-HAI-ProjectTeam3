@@ -1,7 +1,6 @@
 """Resumable same-model diagnostics on validated val inputs, optionally timed.
 
-This is not a quality certification. Reference ages are not MAE, and the blank
-blind-review form must be completed by people before claiming human validation.
+Records reference-age metrics and creates blank human-review forms.
 """
 import argparse
 from collections import defaultdict

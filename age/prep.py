@@ -67,7 +67,7 @@ def source_records(root, source):
                 candidates = by_stem.get(name, [])
                 if len(candidates) != 1:
                     raise ValueError('missing_or_ambiguous_image')
-                # age_past is the age AT CAPTURE; age_now is current age.
+                # age_past is the age at capture; age_now is current age.
                 age = valid_age(label['age_past'])
                 person = str(label['id']).strip()
                 if not person:

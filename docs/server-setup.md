@@ -1,6 +1,6 @@
 # GitHub 업로드와 서버 실행
 
-현재 구현된 나이 추정과 생성·연동 코드를 서버로 옮기는 안내입니다. `gen/`은 중간 발표용 인터페이스·로딩·평가·orchestration과 Mock 검증을 구현했습니다. 2026-10-26 RTX 4060에서 `prompt_only`와 `faceid`를 검증한 뒤, FFHQ-Aging으로 12-step Age LoRA 학습·재로딩·`faceid_age` 생성 1장도 확인했습니다. 연령 변환 품질·정식 나이 정확도 평가는 아직 수행하지 않았습니다.
+나이 추정과 생성·연동 코드를 서버에서 실행하는 안내입니다. 생성 인터페이스는 얼굴을 편집한 뒤 원본 크기로 합성합니다. 로컬 RTX 4060에서 단계별 LoRA 학습과 캡션 비교를 수행했으나 새 모델은 채택하지 않았습니다. 최신 실험 현황은 [README](../README.md#실험-현황-2026-11-01)에, 최초 GPU 실행 환경은 이 문서의 날짜가 붙은 검증 기록에 정리했습니다.
 
 ## GitHub에 올릴 파일
 
@@ -10,6 +10,7 @@ README.md
 requirements.txt
 requirements-insightface.txt    # 향후 전체 InsightFace SDK 사용 시 참고
 requirements-generation.txt   # 실제 생성 모델 실행 시 선택 의존성
+requirements-lora.txt         # LoRA 학습 의존성
 age/                           # 전처리·모델·학습·평가·ONNX·모델 다운로드 코드
 gen/                           # 생성·평가·4컷 연동 및 모델 없는 smoke 검증
 tests/                         # 구현 검사
@@ -99,19 +100,20 @@ python -m age.export_onnx --checkpoint outputs/age/aihub/best.pt --csv data/age_
 
 ## 생성 파이프라인과 최소 연동
 
-### 중간 발표용 검증 범위
+### 검증 범위 (2026-11-01)
 
-1차 Mock 검증에서는 2026-10-26 Linux/Python 3.14.8, Pillow 12.3.0에서 `test_gen_*.py` 29개와 `gen.smoke`를 실행했습니다. PyTorch·NumPy·Diffusers·ONNX Runtime 설치나 모델 다운로드 없이 확인했습니다. 실제 모델 로딩 API를 검사하는 테스트도 모의 런타임을 사용하므로 GPU·텐서 수치·실제 모델 호환성의 증거가 아닙니다. 이후 같은 날 수행한 실제 GPU 검증은 아래 별도 절에 기록합니다.
+Mock은 입출력과 호출 흐름을 검사합니다. 실제 GPU 학습·생성 결과는 [실행 검증](age-lora-validation.md), [단계별 비교](age-lora-stages.md), [얼굴 선택·배경 보존 수정](age-lora-recovery.md)에 구분해 기록했습니다.
 
 | 구분 | 상태 |
 |---|---|
-| 구현 완료 | 생성 입출력, 로컬 모델 로딩 코드, 캡션 매핑, 평가 루프/CSV, 원본+생성 3장 orchestration, 2×2 합성 |
+| 구현 완료 | 생성 입출력, 로컬 모델 로딩, 캡션 매핑, 평가 CSV, 원본+생성 3장 호출, 2×2 합성 |
 | Mock 검증 완료 | 순서·원본 보존·중복 목표 나이·오류 전달·모드별 호출·평가 집계·CSV/JSON 출력 |
-| 실제 모델 검증 | `prompt_only`·`faceid`·12-step LoRA를 사용한 `faceid_age` 각 1장 성공. 정식 나이 ONNX 미검증 |
-| 실제 성능 평가 | 단일 입력의 GPU 시간·메모리·FaceID cosine 기록. 연령 MAE·모집단 정체성 보존·얼굴 검출률은 미평가 |
+| 실제 모델 검증 | 12-step 실행 검증, 100/300-step 학습 비교, 두 캡션 조건별 2,100-step 학습·재로딩 완료 |
+| 생성 비교 | 단계별 400장, 얼굴 선택·합성 수정 후 230장, 캡션 비교 640행(생성 480+원본 복사 160). 시간·메모리·검출·유사도·참고 나이 기록 |
+| 남은 평가 | 정식 나이 MAE, 사람 평가, 독립 인물에 대한 일반화. 새 LoRA의 일관된 개선은 미확인 |
 | 범위 밖 | HTTP API, 웹 UI, 카메라, 프린터, ControlNet, TensorRT, LCM |
 
-1차 Mock 환경의 전체 `unittest` 실행은 `test_age`의 torch 및 `test_face`의 numpy import에서 중단됐습니다. 이후 실제 GPU 환경에서는 전체 42개 중 40개 통과·2개 스킵으로 재검증했습니다. 기존 나이 추정의 Windows 검증, 1차 생성 Mock 검증, 아래 실제 GPU 검증 기록을 구분하세요.
+11월 1일 기록 기준 전체 테스트는 188개 중 186개 통과, 2개 스킵입니다. 생성 테스트 전체에는 NumPy·OpenCV 등의 기본 의존성이 필요하고, 실제 런타임 검사는 생성 의존성도 사용합니다. Mock CLI는 Pillow만으로 실행할 수 있습니다.
 
 ```bash
 python -m unittest discover -s tests -p "test_gen_*.py" -v
@@ -133,7 +135,7 @@ outputs/gen_smoke/
 ```python
 from gen.pipeline import MockPipeline, read_image
 
-pipeline = MockPipeline()  # 명시적인 모의 실행. 실제 생성의 대체 결과가 아님.
+pipeline = MockPipeline()
 try:
     images = pipeline.age_shift(read_image("outputs/gen_smoke/synthetic.png"), [15, 35, 45], seed=42)
 finally:
@@ -142,10 +144,10 @@ finally:
 
 - 입력: RGB PIL 이미지 또는 NumPy `uint8 [H,W,3]`. 파일 입력은 `read_image`가 EXIF 방향과 RGB 변환을 처리합니다.
 - 목표 나이: 0~100 정수의 비어 있지 않은 목록. 출력은 같은 순서·같은 개수의 RGB PIL 이미지입니다.
-- 실제 생성: 기존 얼굴 검출·정렬을 재사용한 여유 있는 512px 크롭을 img2img 입력으로 사용합니다. 결과는 512px입니다.
-- 캡션은 `gen.pipeline.age_prompt`의 단일 매핑을 사용합니다. 향후 LoRA 학습 데이터 준비도 이 함수를 재사용할 수 있습니다.
+- 실제 생성: 512×512 얼굴 크롭을 편집한 뒤 원본 좌표에 합성합니다. 기본 `preserve_background=True`의 출력 크기는 원본과 같으며, `False`로 지정하면 512×512 크롭을 반환합니다.
+- 기본 캡션은 `gen.pipeline.age_prompt`의 연령 그룹 매핑을 사용합니다. `prompt_style='numeric'`은 목표 나이를 추가하지만, 정확한 나이 제어 성능은 아직 검증되지 않았습니다.
 - `AgeShiftPipeline.load()`는 인스턴스마다 한 번 로드합니다. 요청마다 생성기를 다시 만들지 않습니다. `close()`는 자원을 해제합니다.
-- 세 모드는 `prompt_only`(입력 이미지를 사용하는 기본 img2img), `faceid`, `faceid_age`입니다. 모드별 인스턴스를 분리해 어댑터 잔류를 피합니다.
+- 세 모드는 `prompt_only`(FaceID 없는 이미지 편집), `faceid`, `faceid_age`입니다. 기본 경로는 얼굴 마스크를 사용하는 inpainting이며, 모드별 인스턴스를 분리해 어댑터 잔류를 피합니다.
 - 얼굴 미검출은 `FaceNotFoundError`, 로컬 자산 누락은 `ModelUnavailableError`, 생성 실패는 `GenerationError`로 전달합니다. 실제 모드 실패를 Mock으로 자동 대체하지 않습니다.
 - 한 인스턴스는 순차 요청용입니다. 서버에서 병렬 요청으로 공유하는 기능은 이번 범위에 없습니다.
 
@@ -159,9 +161,9 @@ finally:
 | `data/lora/val/` | 400 | 개발·설정·체크포인트 선택. `data/gen_eval/ffhq_val.csv`로 생성 평가에 연결 |
 | `data/lora/test/` | 100 | 설정 고정 후 최종 평가. `data/gen_eval/ffhq_test.csv`로 연결하며 학습·튜닝에 사용하지 않음 |
 
-각 split은 RGB 512×512 PNG와 `metadata.jsonl`의 `file_name`·`text`로 구성됩니다. 캡션은 `gen.pipeline.age_prompt`와 일치하며, FFHQ의 연령 그룹은 정확한 나이 정답이 아닙니다. 따라서 `age.train --data-dir`에 전달하거나 `gen/config.example.json`의 `age_lora`에 데이터 경로를 적으면 안 됩니다. 후자는 학습된 가중치 파일입니다.
+각 split은 RGB 512×512 PNG와 `metadata.jsonl`의 `file_name`·`text`로 구성됩니다. 원본 캡션은 초기 연령 그룹 매핑을 사용합니다. 현재 `age_prompt`의 70+ 문구와 별도 실험의 연령 구간 캡션은 원본과 다르므로 학습 복사본을 구분해야 합니다. FFHQ 연령 그룹은 정확한 나이 정답이 아닙니다. `age.train --data-dir`는 나이 추정 CSV용이며, `gen/config.example.json`의 `age_lora`에는 데이터가 아닌 학습된 가중치 파일을 지정합니다.
 
-`gen.train_lora`가 공식 Diffusers 0.35.1 LoRA 예제를 해시 고정해 실행합니다. `data/lora/train`만 읽으며, `data/lora/` 전체를 하나의 학습 폴더로 재귀 수집하면 val/test가 섞이므로 거부합니다. 데이터 이동 자체와 후속 학습 검증은 별개입니다. RTX 4060에서 전체 무결성 검사와 12-step 학습·재개·재로딩·`faceid_age` 1장 생성까지 수행한 절차는 [Age LoRA 검증 보고서](age-lora-validation.md)에 있습니다. 데이터를 다시 받지 않습니다.
+`gen.train_lora`는 공식 Diffusers 0.35.1 LoRA 예제를 해시 고정해 실행합니다. `data/lora/train` 또는 별도로 준비한 train 복사본을 사용하며, val/test 혼입을 막기 위해 `data/lora/` 전체를 학습 폴더로 지정하면 거부합니다. 최초 검사·학습·재개 절차는 [Age LoRA 검증 보고서](age-lora-validation.md)에 있습니다.
 
 데이터 파일 연결만 확인하려면 프로젝트 루트에서 val 이미지로 Mock을 실행합니다. 실제 얼굴 검출·연령 변환·정확도 검증이 아닙니다.
 
@@ -199,7 +201,7 @@ python -m age.setup_models --with-arcface
 | `image_encoder` | `laion/CLIP-ViT-H-14-laion2B-s32B-b79K`에 대응하는 Transformers 모델·전처리 설정 디렉터리 |
 | `ip_adapter` | `ip-adapter-faceid-plusv2_sd15.bin` 파일 |
 | `faceid_lora` | 기본 빈 값: 체크포인트에 포함되어 Diffusers가 자동 로드한 `faceid_0` 사용. 별도 짝을 이루는 FaceID LoRA 파일을 지정하면 자동 어댑터를 제거하고 교체 |
-| `age_lora` | 별도 학습된 SD1.5 Age LoRA 파일. 12-step 로컬 smoke export는 검증 보고서 참고; 가중치는 Git에 포함하지 않음 |
+| `age_lora` | 비교할 SD1.5 Age LoRA 가중치 파일. 사용한 체크포인트를 명시하며, 실험 후보와 운영 모델을 구분 |
 | `model_root` | `age.setup_models --with-arcface`로 준비한 InsightFace 디렉터리 |
 
 `prompt_only`는 base와 검출·정렬 자산만 필요하며, `faceid`는 Age LoRA 없이 실행합니다. `faceid_age`만 Age LoRA까지 요구합니다. FaceID 모드는 CLIP·ArcFace 임베딩을 함께 사용하고 Plus v2의 shortcut을 활성화합니다. FaceID LoRA와 Age LoRA의 가중치는 별도로 적용합니다.
@@ -214,11 +216,13 @@ python -m gen.pipeline --config gen/config.example.json --mode faceid --image da
 python -m gen.pipeline --config gen/config.example.json --mode faceid_age --image data/demo/portrait.png --targets 15 35 45 --output outputs/gen_full_trial
 ```
 
-모델·데이터의 비상업 연구 및 원저작자 이용 조건을 확인해야 합니다. 아래 단일 샘플의 로딩·추론 검증은 제품 수준의 나이 정확도·정체성 보존 검증이 아닙니다.
+모델·데이터의 비상업 연구 및 원저작자 이용 조건을 확인해야 합니다.
 
 ### 실제 GPU 검증 기록 (2026-10-26)
 
-이 절은 최초 `prompt_only`·`faceid` 검증 기록입니다. `feat/generation-midterm`에서 기존 추론 코드와 29개 생성 테스트를 수정하지 않고 실행했습니다. 다른 모델로 교체하거나 실패를 Mock으로 대체하지 않았습니다. 이 최초 실행에서는 FFHQ-Aging·AI Hub 데이터와 Age LoRA를 사용하지 않았고 학습도 수행하지 않았습니다. 후속 학습 결과는 [별도 보고서](age-lora-validation.md)에 기록했습니다.
+이 절은 얼굴 마스크·원본 합성을 추가하기 전의 `prompt_only`·`faceid` 단일 입력 검증 기록입니다. 당시 `feat/generation-midterm`의 코드와 29개 생성 테스트를 사용했으며, Age LoRA 학습은 후속 [실행 검증 보고서](age-lora-validation.md)에 기록했습니다. 아래 512×512 출력과 측정값은 당시 crop 반환 경로의 결과입니다.
+
+1차 Mock 검증은 Linux/Python 3.14.8, Pillow 12.3.0에서 수행했습니다. 전체 테스트는 torch·numpy 미설치로 중단됐고, 아래 GPU 환경을 준비한 뒤 42개 중 40개 통과·2개 스킵으로 재검증했습니다.
 
 #### 환경과 설치
 
@@ -229,7 +233,7 @@ python -m gen.pipeline --config gen/config.example.json --mode faceid_age --imag
 | CUDA 동작 | `torch.cuda.is_available() == True`, 실제 GPU 행렬곱과 유한값 검사 성공 |
 | Python | 시스템 3.14.8 대신 `.venv`의 Python 3.11.16 사용 |
 | 메모리 / 디스크 | 시스템 RAM 31 GiB; 프로젝트 디스크 여유 약 134 GiB에서 준비 후 122.44 GiB |
-| GPU 공존 | 시작 시 데스크톱 프로그램이 약 1.5 GiB 사용. 다른 프로세스를 종료하지 않음 |
+| GPU 공존 | 시작 시 데스크톱 프로그램이 약 1.5 GiB 사용 |
 | 얼굴 전처리 | ONNX Runtime CPU provider; diffusion UNet·VAE·FaceID CLIP은 CUDA FP16 |
 
 사용 패키지는 torch **2.8.0+cu128**, torchvision **0.23.0+cu128**, diffusers **0.35.1**, transformers **4.57.6**, peft **0.17.1**, accelerate **1.15.0**, safetensors **0.8.0**, huggingface-hub **0.36.2**, onnxruntime **1.31.0**, numpy **2.4.6**, Pillow **12.3.0**, scikit-image **0.26.0**입니다. 전체 의존성 버전은 산출물의 `packages.txt`에 보관했고 `uv pip check`도 통과했습니다. 실행한 설치 명령은 다음과 같습니다.
@@ -263,7 +267,7 @@ FaceID에는 별도의 상세 가중치 라이선스 파일이 없어 [모델 �
 
 입력은 scikit-image 0.26.0에 포함된 `astronaut.png`입니다. [공식 scikit-image 설명](https://scikit-image.org/docs/stable/api/skimage.data.html#skimage.data.astronaut)과 [NASA 원출처](https://www.flickr.com/photos/nasacommons/16504233985/)에서 Eileen Collins의 NASA 사진 `S99-00858`, public domain / no known copyright restrictions임을 확인했습니다. 원본 SHA-256은 `88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5`입니다.
 
-[NASA 이미지·AI 사용 지침](https://www.nasa.gov/nasa-brand-center/images-and-media/)에 따라 **모델에 입력하기 전에** `(125, 10, 335, 225)` 얼굴 영역만 잘라 NASA 로고·휘장을 제외했습니다. 교육·비상업 연구 검증에만 사용하며 상업적 초상 이용 허가를 주장하지 않습니다. 비교 이미지에는 원본 출처와 AI 생성물임을 구분했습니다. 결과는 이 프로젝트의 합성이며 NASA의 제작·보증이나 해당 나이의 실제 사진이 아닙니다.
+[NASA 이미지·AI 사용 지침](https://www.nasa.gov/nasa-brand-center/images-and-media/)에 따라 `(125, 10, 335, 225)` 얼굴 영역을 잘라 로고·휘장을 제외한 뒤 모델에 입력했습니다. 사용 범위는 교육·비상업 연구 검증이며, 상업적 초상 이용 허가는 확인하지 않았습니다. 비교 이미지에는 원본 출처와 AI 생성물임을 표시했습니다. 생성물은 NASA의 제작·보증이나 해당 인물의 실제 나이별 사진이 아닙니다.
 
 사용 설정은 출력 512×512, seed 42, target 55, gender female, DPM++ 2M Karras, steps 25, strength 0.6, CFG 7.5입니다. img2img에서 실제 denoising은 15회였습니다. 측정 스크립트는 `AgeShiftPipeline.load()`와 `age_shift()`를 직접 호출하며 Mock 경로가 없습니다. 실행 명령:
 
@@ -304,12 +308,12 @@ tests_generation.log, tests_all.log, mock_smoke.log, mock_smoke/
 .venv/bin/python -m gen.smoke --output outputs/gpu_validation_20261026/mock_smoke
 ```
 
-- 기존 생성 테스트 **29/29 통과**. 테스트 파일을 수정하지 않았습니다.
-- 전체 테스트 **42개 중 40개 통과, 2개 스킵**, 실패·오류 0개. 스킵은 `Requires smoke ONNX`, `Requires actual prepared faces`이며 모두 통과했다고 보고하지 않습니다.
-- 명시적 Mock smoke의 4컷·9개 평가 행도 정상 생성했습니다. 이 결과를 실제 추론 결과와 섞지 않았습니다.
+- 생성 테스트 **29/29 통과**.
+- 전체 테스트 **42개 중 40개 통과, 2개 스킵**, 실패·오류 0개. 스킵 사유는 `Requires smoke ONNX`, `Requires actual prepared faces`입니다.
+- 별도 Mock smoke에서 4컷·9개 평가 행을 생성했습니다.
 - CUDA ONNX provider 부재, `torch_dtype` 및 scikit-image `estimate` 사용 중단 예고, FaceID LoRA의 text-encoder 키 부재 경고가 있었습니다. ONNX는 CPU 실행으로 확인했고 해당 LoRA는 UNet용입니다. 로딩·추론 실패나 OOM은 없었으며 API·모델 코드를 수정할 필요가 없었습니다.
-- 제작자 base `model_index.json`에는 safety checker가 `null`입니다. 검증에서 이를 새로 끄거나 대체하지 않았고, 따라서 실제 출력의 안전 필터를 검증한 것으로 간주하지 않습니다. 공개 서비스 전 별도 정책·안전 검토가 필요합니다.
-- 후속 12-step Age LoRA 학습·`faceid_age` 로딩 검증은 완료했습니다. 충분한 LoRA 학습·품질 평가, 정식 나이 ONNX, 실제 데이터 기반 4컷, 여러 인물의 연령 MAE·정체성 보존 평가는 남아 있습니다. 모델·입력·생성물·가상환경은 기존 `.gitignore`에 따라 Git에 넣지 않았습니다.
+- 제작자 base `model_index.json`의 safety checker는 `null`이며 그대로 사용했습니다. 출력 안전 필터는 미검증 상태로, 공개 서비스 전 별도 정책·안전 검토가 필요합니다.
+- 당시에는 정식 나이 ONNX, 실제 데이터 기반 4컷, 여러 인물의 연령 MAE·정체성 보존 평가가 미완료였습니다. 후속 실험 상태는 문서 상단의 검증 범위를 참고하세요.
 
 ### D팀 연동
 
@@ -355,6 +359,6 @@ python -m gen.eval --config gen/config.example.json --csv data/gen_eval/samples.
 
 `results.csv`는 목표별 상태·추정 나이·절대 오차·ArcFace cosine·얼굴 실패 여부·시간을 기록합니다. `summary.json`은 모드별 MAE·평균 cosine·유효 표본 수·실패율·설정·평가기 정보를 기록합니다. 얼굴 실패율 분모는 명시적 얼굴 미검출 또는 얼굴 기반 지표 성공으로 검출 여부를 알 수 있는 시도이며, Mock 및 원인 불명 오류는 제외합니다. 누락된 지표는 0이 아닌 빈 값/`null`입니다.
 
-Mock은 평가기를 호출하지 않으며 성능 수치를 만들지 않습니다. 실제 평가도 별도의 InsightFace genderage 교차 측정과 육안 검토를 대체하지 않습니다. 이번 구현에는 학습, 데이터 선별, 대규모 파라미터 그리드 실행을 포함하지 않았습니다.
+Mock은 평가기를 호출하지 않으며 성능 수치를 만들지 않습니다. 실제 평가에는 별도의 InsightFace genderage 교차 측정과 육안 검토를 병행합니다. `gen.eval`은 세 모드의 평가를 담당하며, 학습은 `gen.train_lora`, 조건별 진단은 `gen.quality_experiment`를 사용합니다.
 
 API 확인에 사용한 공식 자료: [Diffusers 0.35.1 IP-Adapter](https://github.com/huggingface/diffusers/blob/v0.35.1/docs/source/en/using-diffusers/ip_adapter.md), [FaceID 모델 카드](https://huggingface.co/h94/IP-Adapter-FaceID), [InsightFace v0.7 ArcFace](https://github.com/deepinsight/insightface/blob/v0.7/python-package/insightface/model_zoo/arcface_onnx.py).

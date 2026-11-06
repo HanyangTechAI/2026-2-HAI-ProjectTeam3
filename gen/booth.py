@@ -1,4 +1,4 @@
-"""CLI-only four-cut orchestration; mocks are not age or face predictions."""
+"""Four-cut composition and CLI orchestration."""
 import argparse
 import math
 from pathlib import Path
@@ -24,7 +24,7 @@ def validate_age(value):
 
 
 class MockAgeEstimator:
-    """Return a fixed, explicitly mock age without examining the image."""
+    """Return a fixed age for any input image."""
 
     is_mock = True
     evaluator_id = 'gen.booth.MockAgeEstimator (fixed age, not a prediction)'

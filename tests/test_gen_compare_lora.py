@@ -1,4 +1,3 @@
-"""CPU-only contracts with injected doubles, not evidence of model quality."""
 from copy import deepcopy
 from dataclasses import asdict
 import json

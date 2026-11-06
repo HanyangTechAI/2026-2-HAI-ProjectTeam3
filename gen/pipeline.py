@@ -39,7 +39,7 @@ def validate_targets(targets):
 
 
 def age_prompt(age, gender='unknown'):
-    """Single caption mapping for inference and future LoRA data preparation."""
+    """Age-group captions shared by inference and LoRA preparation."""
     age = validate_targets([age])[0]
     if gender not in ('male', 'female', 'unknown'):
         raise ValueError('gender must be male, female or unknown')
@@ -311,7 +311,7 @@ class AgeShiftPipeline:
 
 
 class MockPipeline:
-    """Visible placeholders ONLY: no face detection, diffusion or age editing."""
+    """Visible placeholders without face detection, diffusion or age editing."""
     is_mock = True
 
     def __init__(self, mode='faceid_age', seed=42):

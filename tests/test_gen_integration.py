@@ -1,4 +1,3 @@
-"""Pillow-only contract tests. Numeric scores below are test doubles, not model evidence."""
 import csv
 import json
 from pathlib import Path
@@ -17,7 +16,7 @@ from gen.smoke import run_smoke
 
 
 class TestPipeline:
-    """A deterministic nonmock *test double*, never used outside these tests."""
+    """Deterministic test double for the real-mode interface."""
 
     is_mock = False
 

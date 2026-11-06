@@ -1,4 +1,3 @@
-"""Offline contracts only. Fake runtimes do not validate diffusion/tensor numerics."""
 import argparse
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
@@ -19,7 +18,7 @@ from gen.pipeline import (AgeShiftPipeline, MockPipeline, PipelineConfig, age_pr
 
 @contextmanager
 def fake_runtime(automatic=True):
-    """Only tests loader/call wiring, never emulates numerical inference."""
+    """Provide test doubles for model loading and inference calls."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         for name in ('base', 'clip'):

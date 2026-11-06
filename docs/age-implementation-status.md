@@ -1,8 +1,8 @@
 # 나이 추정 구현·실행 상태 (2026-10-05)
 
-문서의 나이 추정 준비 단계부터 학습·평가·ONNX 전달까지 구현했습니다. **정식 학습된 나이 추정 모델은 아직 없습니다.**
+2026-10-05 기준 나이 추정 준비 단계부터 학습·평가·ONNX 전달까지의 구현·실행 기록입니다. **당시 정식 학습된 나이 추정 모델은 없었습니다.** 이후 환경이나 학습 상태를 반영한 현재 실행 안내와는 구분합니다.
 
-2026-10-05 사용자 결정으로 학습 경로를 **ImageNet MobileNetV3 → AI Hub 단독 학습**으로 변경했습니다. UTKFace·AFAD와 Stage 1 체크포인트가 필요하지 않습니다. 전처리·학습 기본 경로는 `data/age_aihub`, 모델 출력은 `outputs/age/aihub`입니다. 기존 데이터·시험 산출물은 보존합니다.
+2026-10-05 학습 경로를 **ImageNet MobileNetV3 → AI Hub 단독 학습**으로 변경했습니다. 이 경로에는 UTKFace·AFAD와 Stage 1 체크포인트가 필요하지 않습니다. 당시 전처리·학습 기본 경로는 `data/age_aihub`, 모델 출력은 `outputs/age/aihub`였습니다. 기존 데이터·시험 산출물은 보존했습니다.
 
 | 단계 | 실행 결과 |
 |---|---|
@@ -18,14 +18,14 @@
 | ONNX 실행 검증 | 합성 val 4장 및 실제 정렬 얼굴 20장 모두 PyTorch/ORT 최대 차이 0.01세 미만 |
 | 검사 | 단위·실제 얼굴 정렬 검사 13개 통과. AI Hub 단독 기본값·다른 출처 거부, 미검출, 다중 얼굴 선택 규칙, 정렬 일치, 인물/중복 누수, 경계 라벨·gradient·지표·경로 검사 포함 |
 
-검증 모델의 나이는 임의 출력입니다. `outputs/smoke/*.onnx`와 체크포인트는 합성 입력으로 2 batch만 학습한 시험용이고 실제 나이 성능을 보여주지 않습니다. ONNX 메타데이터에 `smoke_artifact=true`가 있으며 정식 평가와 기본 추론에서 사용을 거부합니다. 정식 MAE 표나 최종 `age_estimator.onnx`는 아직 생성하지 않았습니다.
+`outputs/smoke/*.onnx`와 체크포인트는 합성 입력으로 2 batch만 학습한 실행 검증용 모델입니다. 출력 나이는 실제 나이 성능 평가에 사용할 수 없습니다. ONNX 메타데이터에 `smoke_artifact=true`가 있으며 정식 평가와 기본 추론에서 사용을 거부하도록 구현했습니다. 당시 정식 MAE 표와 최종 `age_estimator.onnx`는 생성하지 않았습니다.
 
-현재 환경은 Windows/Python 3.13, PyTorch 2.14.1+cpu/torchvision 0.29.1+cpu입니다. 공식 InsightFace SDK의 C++ 확장 설치가 실패하여 공식 v0.7의 SCRFD·face_align·attribute 원본 Python 코드와 공식 buffalo_l의 det_10g/genderage ONNX 가중치를 내려받아 그대로 사용합니다. GPU 서버에서도 같은 코드를 사용하여 학습·추론 정렬 차이를 방지합니다. 사용 소스와 모델의 체크섬은 `models/insightface/provenance.json`에 있습니다.
+당시 실행 환경은 Windows/Python 3.13, PyTorch 2.14.1+cpu/torchvision 0.29.1+cpu였습니다. 공식 InsightFace SDK의 C++ 확장 설치가 실패하여 공식 v0.7의 SCRFD·face_align·attribute 원본 Python 코드와 공식 buffalo_l의 det_10g/genderage ONNX 가중치를 내려받아 그대로 사용했습니다. GPU 서버에서도 같은 코드를 사용해 학습·추론 정렬 차이를 방지하도록 구성했습니다. 사용 소스와 모델의 체크섬은 `models/insightface/provenance.json`에 있습니다.
 
-남은 정식 학습 조건:
+당시 남은 정식 학습 조건:
 
 1. 여러 독립 인물의 승인된 AI Hub 전체 데이터를 확보·검사·전처리. `age_past`와 인물별 분할을 유지합니다.
-2. GPU-hai의 사용 가능한 접속 경로 및 프로젝트·데이터 경로. 현재 PC에서는 CUDA GPU가 확인되지 않았습니다.
+2. GPU-hai의 사용 가능한 접속 경로 및 프로젝트·데이터 경로. 당시 PC에서는 CUDA GPU가 확인되지 않았습니다.
 3. AI Hub 단독 학습·최저 val 모델 고정·최종 test 및 기준선 평가·ONNX 전달.
 
-실행 명령은 [README](../README.md), 출처와 확보 상태는 [data/README](../data/README.md)를 참고하세요. 자료 부족을 임의 라벨·이미지·동일인 분할로 보완하지 않았습니다.
+실행 명령은 [README](../README.md), 데이터 출처와 확보 기록은 [data/README](../data/README.md)에 별도로 정리되어 있습니다. 실제 AI Hub 자료는 제공된 인물 1명의 사진으로 한정했고, 임의 라벨·이미지 보충이나 동일인 사진 분할 없이 train/val/test = 48/0/0을 유지했습니다.

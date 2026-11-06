@@ -1,4 +1,3 @@
-"""CPU doubles validate journaling, not generated model quality."""
 from dataclasses import asdict
 import json
 from pathlib import Path

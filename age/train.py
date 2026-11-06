@@ -120,10 +120,12 @@ def main():
     amp = args.device.startswith('cuda')
     scaler = torch.amp.GradScaler('cuda', enabled=amp)
     history, best = [], float('inf')
+    total_optimizer_steps = 0
     for epoch in range(args.epochs):
         epoch_started = time.perf_counter()
         model.train()
         losses = []
+        optimizer_steps, amp_skipped_steps = 0, 0
         for step, (images, ages, _) in enumerate(loader):
             if args.smoke_steps and step >= args.smoke_steps:
                 break
@@ -136,26 +138,41 @@ def main():
             if not torch.isfinite(loss):
                 raise ValueError('Nonfinite loss')
             scaler.scale(loss).backward()
+            previous_scale = scaler.get_scale()
             scaler.step(optimizer)
             scaler.update()
+            # GradScaler lowers its scale when nonfinite gradients skip an update.
+            if scaler.get_scale() < previous_scale:
+                amp_skipped_steps += 1
+            else:
+                optimizer_steps += 1
             losses.append(loss.item())
         if not losses:
             raise ValueError('No training batches (at least two training images required)')
         metrics = metric_rows(predict(model, val_loader, args.device))
         mae = next(r['mae'] for r in metrics if r['source'] == 'all' and r['age_group'] == 'all')
         epoch_seconds = time.perf_counter() - epoch_started
+        total_optimizer_steps += optimizer_steps
         history.extend(dict(epoch=epoch + 1, train_loss=sum(losses) / len(losses),
+                            optimizer_steps=optimizer_steps, amp_skipped_steps=amp_skipped_steps,
+                            amp_scale=scaler.get_scale(),
                             epoch_seconds=epoch_seconds, lr=optimizer.param_groups[0]['lr'], **m)
                        for m in metrics)
-        scheduler.step()
-        if mae < best:
+        if optimizer_steps:
+            scheduler.step()
+        if optimizer_steps and mae < best:
             best = mae
             torch.save(dict(model=model.state_dict(), epoch=epoch + 1, val_mae=best, run=run,
+                            optimizer_steps=total_optimizer_steps,
                             split_rows={'train': train.rows, 'val': val.rows},
                             optimizer=optimizer.state_dict(), scheduler=scheduler.state_dict()), args.output / 'best.pt')
         write_csv(args.output / 'history.csv', history)
         print(f'epoch={epoch + 1} loss={sum(losses) / len(losses):.4f} val_MAE={mae:.4f} best={best:.4f} '
+              f'optimizer_steps={optimizer_steps} amp_skipped_steps={amp_skipped_steps} '
               f'seconds={epoch_seconds:.1f} estimated_remaining_hours={epoch_seconds * (args.epochs - epoch - 1) / 3600:.2f}', flush=True)
+    if not total_optimizer_steps:
+        raise RuntimeError('No optimizer updates completed; all training batches were skipped by AMP. '
+                           'No trained checkpoint was saved.')
     print(f'Checkpoint: {args.output / "best.pt"}. Test evaluation is a separate frozen-checkpoint command.')
 
 

@@ -1,4 +1,4 @@
-"""No real processes/signals: deadline and logging contracts with owned-child doubles."""
+"""Deadline and logging tests with mocked processes."""
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path

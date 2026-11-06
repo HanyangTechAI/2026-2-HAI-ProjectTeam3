@@ -1,4 +1,3 @@
-"""Synthetic CPU preparation contracts, not real-data/model-quality evidence."""
 from copy import deepcopy
 import json
 import math

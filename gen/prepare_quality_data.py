@@ -1,8 +1,8 @@
-"""Train-only data preparation, never training or production crop approval.
+"""Train-only caption, sampling, and crop-preview preparation.
 
-Use a NEW output directory and an explicit UTC deadline. Wrap real commands in
+Use a new output directory and an explicit UTC deadline. Wrap real commands in
 gen.record_command for a hard process deadline, including native ONNX calls.
-Interrupted runs retain fsynced journals and are not resumable; use a new output.
+Interrupted runs retain fsynced journals and are not resumable.
 """
 import argparse
 from collections import Counter
@@ -48,7 +48,7 @@ def caption_digest(text):
 
 
 def range_caption(age_group, gender):
-    """Use label intervals, never invented exact ages or cross-age pairs."""
+    """Describe the source age interval rather than an exact age."""
     if age_group not in AGE_GROUPS or gender not in GENDERS:
         raise ValueError('Unsupported age_group or gender')
     interval = '70 or older' if age_group == '70-120' else age_group.replace('-', ' to ') + ' years'
@@ -95,7 +95,7 @@ def _read_rows(path, check):
 
 
 def load_train(source, provenance, check=lambda: None):
-    """Validate the entire train inventory; never open val/Test image inputs.
+    """Validate all train records without reading val/test images.
 
     The existing shared provenance index includes other splits. Only its train
     rows are joined; all train rows must match, without label inference from text.
@@ -367,7 +367,7 @@ def prepare(command, source, provenance, output, *, deadline, reserve_seconds=15
                         from PIL import Image
                         with Image.open(path) as image:
                             image.load()
-                            # No overrides: exactly deployment's default crop/selection.
+                            # Use deployment's default crop and face selection.
                             edit = faces.prepare_edit(image)
                         result.update(source_to_crop=_plain(edit.matrix),
                                       selection_info=_plain(edit.selection_info),

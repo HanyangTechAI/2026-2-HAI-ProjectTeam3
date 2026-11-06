@@ -1,4 +1,3 @@
-"""CPU geometry/selection contracts; fake detections are not model-quality evidence."""
 from dataclasses import replace
 import hashlib
 from types import SimpleNamespace
@@ -28,7 +27,7 @@ def detection(bbox=(150, 90, 370, 430), score=0.9, kps=None):
 
 def estimate_norm(points, image_size):
     assert image_size == 112
-    # Deterministic similarity fit; both old crop and new geometry use this fixture.
+    # Shared deterministic similarity fit for crop and edit geometry.
     x, y = points.T
     rows = np.zeros((10, 4))
     rows[::2] = np.stack([x, -y, np.ones(5), np.zeros(5)], axis=1)

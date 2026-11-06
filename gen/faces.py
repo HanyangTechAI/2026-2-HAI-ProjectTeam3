@@ -77,7 +77,7 @@ class FaceTools:
         candidates, guards = [], []
         info = {'detector_sizes': [640, 320], 'det_thresh': 0.5,
                 'raw_counts': {}, 'rejected': [], 'candidates': []}
-        # Always inspect BOTH scales: a spurious small face at 640 is not success.
+        # Inspect both scales; 640px detection can miss the primary face.
         self.aligner.detector.det_thresh = 0.5
         for size in info['detector_sizes']:
             boxes, landmarks = self.aligner.detector.detect(bgr, input_size=(size, size))
@@ -205,7 +205,7 @@ class FaceTools:
                 if name != 'source_protect_mask' and value.getbbox() is None:
                     raise ValueError(f'{name} must be nonempty')
         rgb, face = self._select(image)
-        # EXACT FaceAligner.crop(size=512, context=True) math, without changing age.
+        # Match FaceAligner.crop(size=512, context=True).
         matrix = self.aligner.face_align.estimate_norm(face.kps, image_size=112) * (512 / 112)
         if not np.isfinite(matrix).all() or abs(np.linalg.det(matrix[:, :2])) < 1e-10:
             raise ValueError('invalid_similarity_transform')

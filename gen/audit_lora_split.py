@@ -1,7 +1,7 @@
 """Read-only CPU leakage-candidate screening, not person identification.
 
 Test is read only for leakage screening. Fixed validation selection depends on
-TRAIN similarities, face availability and original metadata, never test matches.
+train similarities, face availability and original metadata, never test matches.
 """
 import argparse
 from collections import Counter
@@ -111,7 +111,7 @@ def stable_key(row, seed=42):
 
 
 def init_worker(model_root, threads, fallback_size=0):
-    """Bound all repository FaceTools sessions without changing that API/code."""
+    """Initialize thread-limited CPU FaceTools sessions."""
     global _faces, _fallback_size
     _fallback_size = fallback_size
     for key in ('OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'NUMEXPR_NUM_THREADS'):
@@ -315,7 +315,7 @@ def cross_split_candidates(records, embeddings, threshold=.5):
 
 
 def select_validation(records, embeddings, candidates, threshold=.5, seed=42):
-    """One original val sample per cell; TEST pairs cannot change eligibility."""
+    """One original val sample per cell; test pairs cannot change eligibility."""
     blocked = set()
     for pair in candidates:
         if {pair['split_a'], pair['split_b']} == {'train', 'val'} and pair['cosine'] >= threshold:

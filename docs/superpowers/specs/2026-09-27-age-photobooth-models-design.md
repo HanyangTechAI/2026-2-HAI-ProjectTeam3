@@ -1,6 +1,8 @@
-# 나이 추정 & 연령 변환 포토부스 — 데이터/모델 설계
+# 나이 추정·연령 변환 포토부스 데이터/모델 설계 (초기안)
 
-> 2026-10-05 변경 결정: 나이 추정은 **AI Hub 71415만으로 ImageNet 사전학습 MobileNetV3를 직접 학습**한다. 아래의 UTKFace+AFAD → AI Hub Stage 1/2 설명은 이전 설계이며 현재 선행 조건이 아니다. 모델·손실·전처리·인물별 분할은 유지한다. 최신 실행 경로와 명령은 저장소 루트 `README.md`를 따른다. 생성 모델 계획은 그대로 유지한다.
+이 문서는 2026-09-27의 초기 설계 기록이다. 아래의 데이터 경로·학습 단계·서버 인터페이스는 당시 계획이며 현재 구현과 다르다.
+
+나이 추정은 10월 5일 AI Hub 71415 단독 학습으로 변경했다. 생성 경로는 이후 얼굴 마스크와 원본 합성을 추가했다. 현재 실행 방법은 [README](../../../README.md), 생성 경로 변경은 [수정 보고서](../../age-lora-recovery.md)를 따른다.
 
 - 작성일: 2026-09-27
 - 범위: 데이터셋 준비, 나이 추정 모델, 연령 변환 모델, 평가 (Phase 1, ~10/29 중간발표)
@@ -10,13 +12,13 @@
 
 | 항목 | 결정 | 이유 |
 |---|---|---|
-| 나이 추정 | MobileNetV3-Large 단일 모델, DLDL-v2, ONNX | 앙상블 없이 충분한 MAE, 경량 |
-| 연령 변환 | Realistic Vision V5.1(SD1.5) img2img + IP-Adapter FaceID Plus v2 + Age LoRA 1개 | 학습은 LoRA만, 5주 내 현실적 |
+| 나이 추정 | MobileNetV3-Large 단일 모델, DLDL-v2, ONNX | 경량 모델로 시작해 목표 MAE 평가 |
+| 연령 변환 | Realistic Vision V5.1(SD1.5) img2img + IP-Adapter FaceID Plus v2 + Age LoRA 1개 | 5주 일정에서 학습 대상을 LoRA로 제한 |
 | ControlNet | 기본 미사용 | 평가에서 구도 붕괴가 확인될 때만 depth 추가 |
-| 얼굴 검출/정렬 | insightface `buffalo_l` (SCRFD + 5점) | IP-Adapter FaceID가 어차피 요구, 학습·추론 전처리 통일 |
+| 얼굴 검출/정렬 | insightface `buffalo_l` (SCRFD + 5점) | FaceID에 필요한 검출기를 공유하고 학습·추론 전처리 통일 |
 | 나이 추정 데이터 | UTKFace + AFAD-Full → AI Hub 71415 파인튜닝 | AI Hub 승인 전에도 전체 파이프라인 가동 |
 | LoRA 데이터 | FFHQ-Aging (+AI Hub 승인 후) | 1024px 고해상도 + 10개 연령 그룹 라벨 |
-| CACD | 미사용 | 250×250 저해상도, 동일인 시간축 장점은 IP-Adapter 구조에서 불필요 |
+| CACD | 미사용 | 250×250 저해상도이며, 동일인 연령쌍을 활용하는 학습은 초기 범위에서 제외 |
 | GPU | GPU-hai 서버 (24GB+) | 학습·데모 추론 모두 |
 
 ## 1. 데이터 준비
@@ -27,13 +29,13 @@
 |---|---|---|---|
 | 나이 추정 | UTKFace | ~23k, 0–116세 | 파일명에 age/gender |
 | 나이 추정 | AFAD-Full | ~164k, 아시아인 | 20–30대 편중 → 균형 샘플러 |
-| 나이 추정 파인튜닝 | AI Hub 71415 | ~50k, 한국인 | **즉시 신청**. 라벨 포맷은 수령 후 변환기 추가 |
+| 나이 추정 파인튜닝 | AI Hub 71415 | ~50k, 한국인 | 접근 신청 필요. 라벨 포맷은 수령 후 변환기 추가 |
 | Age LoRA | FFHQ-Aging | 70k 중 ~10k 사용 | 라벨 CSV(age_group, confidence, gender, head pose) |
 
 ### 1.2 전처리 규칙
 
 - 모든 얼굴: insightface `buffalo_l`로 검출 → 5점 랜드마크 similarity transform 정렬. 이미 크롭된 UTKFace/AFAD도 동일하게 재정렬(추론 입력과 분포 일치).
-- 검출 실패 이미지는 제외하고 데이터셋별 제외 수를 로그로 남긴다(중간발표 "전처리 결과"에 사용).
+- 검출 실패 이미지는 제외하고 데이터셋별 제외 수를 로그로 남긴다.
 - 나이 추정용: 224px 크롭 → `data/age/{train,val,test}.csv` (`path,age,gender,source`), 8:1:1 랜덤 분할. AI Hub는 **인물 ID 기준 분할**.
 - LoRA용: FFHQ-Aging에서 `age_group_confidence > 0.8`, `|yaw| < 30°` 필터 → 연령그룹(10) × 성별(2) 셀당 ~500장 → 512px 리사이즈 → `data/lora/metadata.jsonl` (`file_name`, `text`).
 
@@ -122,7 +124,7 @@ data/lora/{images/, metadata.jsonl}
 - `--train_data_dir data/lora`, rank 16, lr 1e-4, 512px, batch 8, ~8k step, fp16, UNet만 학습.
 - 1000 step마다 체크포인트 저장 + 10개 연령 그룹 검증 프롬프트 샘플링 → 최적 체크포인트 선택.
 
-### 3.3 튜닝 노브
+### 3.3 조정할 설정
 
 strength, IP-Adapter scale(+`s_scale`), Age LoRA 가중치. 정체성 보존과 나이 변화가 서로 반대로 당기므로 하드코딩하지 않고 3.4의 그리드로 결정한다.
 
@@ -145,17 +147,17 @@ strength, IP-Adapter scale(+`s_scale`), Age LoRA 가중치. 정체성 보존과 
 | 파일 | 역할 |
 |---|---|
 | `age/prep.py` | 검출·정렬, 나이 추정 CSV + LoRA metadata.jsonl 생성 |
-| `age/train.py` | MobileNetV3 DLDL 학습·평가 (~150줄, argparse) |
+| `age/train.py` | MobileNetV3 DLDL 학습·평가 (argparse) |
 | `age/export_onnx.py` | ONNX export + PyTorch/ORT 출력 일치 assert |
 | `gen/pipeline.py` | 모델 1회 로드, `age_shift(img, targets) -> list[Image]` |
 | `gen/eval.py` | ablation·그리드 실행, Age MAE / Identity CSV |
 | (셸 명령) | diffusers LoRA 학습 |
 
-설정 파일 없음. 모든 하이퍼파라미터는 argparse 인자.
+초기안은 별도 설정 파일 없이 argparse 인자로 하이퍼파라미터를 전달하는 구성이었다.
 
+## 6. 처리 흐름
 
-
-단순화
+```text
                 얼굴 사진
                    │
                    ▼
@@ -185,3 +187,4 @@ strength, IP-Adapter scale(+`s_scale`), Age LoRA 가중치. 정체성 보존과 
                             │
                             ▼
                     70세 얼굴 생성
+```

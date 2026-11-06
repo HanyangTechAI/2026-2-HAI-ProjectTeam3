@@ -1,4 +1,4 @@
-"""Prepare a separate corrected train split and preserve stage-three fingerprints."""
+"""Prepare a separate corrected train split and preserve prior-run fingerprints."""
 import argparse
 import json
 from pathlib import Path

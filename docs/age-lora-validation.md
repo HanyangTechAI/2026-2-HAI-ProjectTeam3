@@ -2,9 +2,9 @@
 
 ## 결과와 해석
 
-기존 FFHQ-Aging 준비본과 기존 실추론에 성공한 **동일한 Realistic Vision V5.1 로컬 모델**로 실제 학습을 실행했다. 10 optimization step 후 checkpoint-10에서 2 step을 재개해 **총 12 step**을 적용했다. 저장된 LoRA의 256개 텐서를 새 베이스 모델에 재로딩해 전부 일치하는지 검사했고, `gen.pipeline.AgeShiftPipeline(mode='faceid_age')`로 실제 RGB 512×512 이미지 1장을 생성했다.
+2026-10-26의 초기 학습 경로 검증 기록이다. 기존 FFHQ-Aging 준비본과 기존 실추론에 성공한 **동일한 Realistic Vision V5.1 로컬 모델**로 실제 학습을 실행했다. 10 optimization step 후 checkpoint-10에서 2 step을 재개해 **총 12 step**을 적용했다. 저장된 LoRA의 256개 텐서를 새 베이스 모델에 재로딩해 전부 일치하는지 검사했고, `gen.pipeline.AgeShiftPipeline(mode='faceid_age')`로 실제 RGB 512×512 이미지 1장을 생성했다.
 
-**학습 파이프라인·저장·로딩 경로 검증일 뿐, 품질 좋은 Age LoRA나 연령 변환 정확도를 입증한 결과가 아니다.** 두 초기 오류와 스킵·미실행 항목도 아래에 구분한다. 데이터·기존 모델은 다시 다운로드하지 않았다. 설치한 학습 패키지와 공식 Python 예제 소스는 이미지 데이터 다운로드와 별개다.
+**검증 범위는 학습 파이프라인·저장·로딩 경로이며, 연령 변환 품질과 정확도는 평가하지 않았다.** 두 초기 오류와 스킵·미실행 항목도 아래에 구분했다. 데이터·기존 모델은 다시 다운로드하지 않았으며, 학습 패키지와 공식 Python 예제 소스만 별도로 설치·확보했다. 이후 학습량 비교와 추론 경로 수정은 [단계별 실험](age-lora-stages.md)과 [보존 수정 검증](age-lora-recovery.md)에 기록했다.
 
 ## 데이터 검증
 
@@ -16,7 +16,7 @@
 | val | 있음 | 400 | 400 | 400 | 400 | 400 | 0 |
 | test | 있음 | 100 | 100 | 100 | 100 | 100 | 0 |
 
-`gen.validate_lora_data`는 파일 경로 이탈, 중복 참조, 미참조 이미지, 이미지 ID·파일 SHA-256 중복, 비정상 캡션, 손상·크기·모드도 검사한다. **수정한 데이터는 0건**이다. 기존 분할·캡션·이미지는 보존했다. `data/reports/ffhq_aging_samples.jsonl`의 8,663개 출처 기록도 파일 해시·split·캡션·저작자·라이선스, `age_group_confidence > 0.8` 및 `abs(head_yaw) < 30`을 대조해 통과했다. 인물 단위 중복 검사는 아니다.
+`gen.validate_lora_data`로 파일 경로 이탈, 중복 참조, 미참조 이미지, 이미지 ID·파일 SHA-256 중복, 비정상 캡션, 손상·크기·모드도 검사했다. **수정한 데이터는 0건**이다. 기존 분할·캡션·이미지는 보존했다. `data/reports/ffhq_aging_samples.jsonl`의 8,663개 출처 기록도 파일 해시·split·캡션·저작자·라이선스, `age_group_confidence > 0.8` 및 `abs(head_yaw) < 30`을 대조해 통과했다. 인물 단위 중복 검사는 포함하지 않았다.
 
 10개 연령 그룹 × 2개 성별에 대해 val/test는 각각 셀당 20/5장이다. train의 상한 500장에 미달하는 셀은 다음과 같다. 나머지 6개 연령 그룹은 성별마다 500장이다.
 
@@ -53,9 +53,9 @@ train 합계는 남성 4,015, 여성 4,148장이다. 균형 목표 10,000장보�
 
 `requirements-lora.txt`는 생성 의존성과 `datasets==4.2.0`을 정의한다. 설치 시 `fsspec`가 2026.9.0에서 datasets 요구 범위인 2025.9.0으로 조정됐고, 기존 torch/diffusers/transformers/peft는 유지했다. `uv pip check --python .venv/bin/python`은 설치 전후 모두 통과했다. 전체 버전은 출력의 `packages.txt`에 있다. 8-bit Adam과 xformers를 추가 설치할 필요는 없었다.
 
-## 실행 절차
+## 당시 실행 기록
 
-프로젝트 루트에서 실행한다. 이미 검증한 CUDA `.venv`와 로컬 모델·데이터를 사용한다. 아래 출력 디렉터리는 이번 실행으로 이미 존재하므로 새 시험은 다른 경로를 사용한다. 일반 학습은 기존 출력 덮어쓰기를 거부하고, 재개만 명시적으로 같은 경로를 사용한다.
+아래는 프로젝트 루트에서 검증한 CUDA `.venv`와 로컬 모델·데이터로 실행한 당시 명령이며, 현재 실행 안내가 아니다. 출력 디렉터리는 이 실험에서 생성했다. 당시 래퍼는 일반 학습의 기존 출력 덮어쓰기를 거부하고, 명시적 재개에만 같은 경로 사용을 허용했다.
 
 ```bash
 uv pip install --python .venv/bin/python -r requirements-lora.txt
@@ -74,7 +74,7 @@ OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 .venv/bin/python -m gen.train_lora \
   --config gen/lora.smoke.json \
   --output outputs/age_lora_validation_20261026/train
 
-# 호환 처리 후 실제 재시도: 10 step와 checkpoint-5/10 저장.
+# 호환 처리 후 실제 재시도: 10 step 및 checkpoint-5/10 저장.
 OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 .venv/bin/python -m gen.train_lora \
   --config gen/lora.smoke.json \
   --output outputs/age_lora_validation_20261026/train_retry
@@ -86,14 +86,14 @@ OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 .venv/bin/python -m gen.train_lora \
   --resume-from-checkpoint checkpoint-10 --max-train-steps 12
 ```
 
-학습 중에는 `HF_HUB_OFFLINE=1`, `HF_DATASETS_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`을 강제한다. ImageFolder의 `Downloading data` 진행 문구는 로컬 파일을 해석할 때도 나오는 datasets 공통 표시이며, 이 실행에서는 로컬 경로만 전달했다. 온라인 dataset 이름·Hub 업로드 옵션은 래퍼가 허용하지 않는다.
+학습 중에는 `HF_HUB_OFFLINE=1`, `HF_DATASETS_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`을 강제했다. ImageFolder의 `Downloading data` 진행 문구는 로컬 파일을 해석할 때도 나오는 datasets 공통 표시이며, 이 실행에서는 로컬 경로만 전달했다. 당시 래퍼는 온라인 dataset 이름·Hub 업로드 옵션을 허용하지 않았다.
 
-공식 소스: [Diffusers v0.35.1 train_text_to_image_lora.py](https://github.com/huggingface/diffusers/blob/v0.35.1/examples/text_to_image/train_text_to_image_lora.py). 원본 SHA-256은 `3dcc88d582bb9f20d4e72278f0a76749a1190ed43a6521b2cdb297efa512136a`이다. 래퍼는 원본 파일을 변경하지 않고 다음 두 지점만 메모리에서 수정하며 `command.json`에 기록한다.
+공식 소스: [Diffusers v0.35.1 train_text_to_image_lora.py](https://github.com/huggingface/diffusers/blob/v0.35.1/examples/text_to_image/train_text_to_image_lora.py). 원본 SHA-256은 `3dcc88d582bb9f20d4e72278f0a76749a1190ed43a6521b2cdb297efa512136a`이다. 당시 래퍼는 원본 파일을 변경하지 않고 다음 두 지점만 메모리에서 수정했으며 `command.json`에 기록했다.
 
 - `lora_layers`의 일회용 `filter`를 목록으로 만든다. 원본에서는 AdamW 생성이 iterator를 소진해 이후 gradient clipping이 빈 목록에 적용될 수 있다.
 - 최종 저장 전 전체 UNet의 FP32 변환을 GPU 대신 CPU에서 수행한다. 동결된 기본 가중치까지 GPU에서 확장하는 불필요한 VRAM 사용을 피한다.
 
-그 외 호환 처리로 CLI의 `report_to="none"`을 Accelerator의 Python `log_with=None`으로 전달한다. 계산은 공식 예제의 noise-prediction MSE·UNet LoRA 경로를 사용한다. 관찰용 Accelerator는 CUDA 장치·trainable 텐서, 유한 loss·0보다 큰 gradient norm, AMP step skip 여부, 실제 가중치 변화량을 검사하고 JSONL로 남긴다. 검사용 첫 배치를 별도로 읽으므로 수정 없는 공식 실행과 난수 순서가 같다고 주장하지 않는다.
+그 외 호환 처리로 CLI의 `report_to="none"`을 Accelerator의 Python `log_with=None`으로 전달했다. 계산은 공식 예제의 noise-prediction MSE·UNet LoRA 경로를 사용했다. 관찰용 Accelerator는 CUDA 장치·trainable 텐서, 유한 loss·0보다 큰 gradient norm, AMP step skip 여부, 실제 가중치 변화량을 검사하고 JSONL로 남겼다. 검사용 첫 배치를 별도로 읽었으므로 수정 없는 공식 실행과 난수 순서가 달라질 수 있다.
 
 ## 실제 결과
 
@@ -104,13 +104,13 @@ OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 .venv/bin/python -m gen.train_lora \
 | `train_retry/resume-12` | 11~12 | 성공. checkpoint-10의 model/optimizer/scheduler/sampler/GradScaler/RNG 상태 로드 후 2 step, 최종 LoRA 256개 텐서 정확한 재로딩 확인 |
 
 - 총 **12개의 실제 optimizer update**, skip 0회, OOM 0회. 모든 관찰 loss와 gradient norm이 유한했다.
-- 누적 step loss 범위 **0.039817~0.319463**, clipping 전 gradient norm **0.013722~0.045788**. 배치·noise timestep이 다르므로 이 범위로 수렴이나 품질을 주장하지 않는다.
+- 누적 step loss 범위 **0.039817~0.319463**, clipping 전 gradient norm **0.013722~0.045788**. 서로 다른 배치·noise timestep에서 측정한 값으로, 수렴이나 품질 판정에는 부족하다.
 - 첫 10 step에서 초기 LoRA 대비 최대 절댓값 변화 **0.001000895**; 재개 2 step에서 checkpoint-10 대비 추가 변화 **0.000205442**.
 - 학습 직전 PyTorch 관점 여유 VRAM: 재시도 **6,716.69MiB**, 재개 **6,704.50MiB**. CUDA runtime이 보고하는 총 메모리와 nvidia-smi의 총 메모리는 서로 다르다.
 - 학습 peak allocated **2,525.50MiB**, peak reserved **2,704MiB**. 0.5초 간격 nvidia-smi 최대 관측치는 **3,937MiB**이며 다른 애플리케이션을 포함한다. 후자는 연속 측정한 정확한 peak가 아니다.
 - 재시도 전체 약 **26.77초**, 재개·최종 재로딩 약 **11.80초**. 모델 해시 계산·로딩·저장·CPU 재로딩을 포함하며 순수 학습 속도 벤치마크가 아니다.
 
-최종 추론용 파일은 `outputs/age_lora_validation_20261026/train_retry/pytorch_lora_weights.safetensors`이다. SHA-256: `e87abcfc7c2c5fca982717c82b9f2be0fc292d511b47f56d320f897f6deeb022`. **루트 LoRA export는 12 step이고, 전체 재개용 상태는 checkpoint-5와 checkpoint-10에 있다.** checkpoint-12의 전체 optimizer 상태를 저장했다고 해석하면 안 된다. 공식 Accelerate 체크포인트는 동결된 UNet도 포함해 LoRA 파일보다 크다.
+최종 추론용 파일은 `outputs/age_lora_validation_20261026/train_retry/pytorch_lora_weights.safetensors`이다. SHA-256: `e87abcfc7c2c5fca982717c82b9f2be0fc292d511b47f56d320f897f6deeb022`. **루트 LoRA export는 12 step이고, 전체 재개용 상태는 checkpoint-5와 checkpoint-10에 있다.** checkpoint-12의 전체 optimizer 상태는 저장하지 않았다. 공식 Accelerate 체크포인트는 동결된 UNet도 포함해 LoRA 파일보다 크다.
 
 ## faceid_age 샘플
 
@@ -123,7 +123,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONPATH=. OMP_NUM_THREADS=4 MKL_NUM_T
   .venv/bin/python outputs/age_lora_validation_20261026/verify_faceid_age.py
 ```
 
-이 로컬 실행 산출 스크립트는 `gen.pipeline`을 호출하고 원본 입력·베이스 모델·LoRA 해시를 대조한다. 추후 표준 CLI로 같은 설정을 사용하는 방법은 다음과 같다. 아래 CLI 예시는 별도로 실행하지 않았다.
+이 로컬 실행 산출 스크립트는 `gen.pipeline`을 호출하고 원본 입력·베이스 모델·LoRA 해시를 대조했다. 아래는 당시 표준 CLI로 같은 설정을 사용하는 예시이며, 별도로 실행하지 않았다. 이후 추론 경로가 변경되어 현재 코드의 실행 결과와는 구분한다.
 
 ```bash
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m gen.pipeline \
@@ -134,7 +134,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m gen.pipeline \
 
 실제 활성 adapter는 `faceid`, `age` 두 개다. 목표 55, seed 42, steps 25, strength 0.6이므로 img2img denoising 반복은 15회였다. 모델 로딩 **4.47초**, 얼굴 전처리를 포함한 생성 **2.46초**. 추론 peak allocated **4,050.51MiB**, reserved **4,376MiB**. 출력은 RGB 512×512이며 `input.png`, `input_crop.png`, `age_55.png`, `comparison.png`로 확인할 수 있다. 학습과 추론을 합친 PyTorch allocated 최대는 추론의 4,050.51MiB다.
 
-InsightFace ONNX는 기존 환경처럼 **CPU provider**로 실행됐고 diffusion은 CUDA로 실행됐다. 로컬 베이스에 safety checker가 없다는 기존 제한도 유지된다. 하나의 출력이 목표 나이 정확도·동일인 유지·인구집단 일반화를 검증하지 않는다.
+InsightFace ONNX는 기존 환경처럼 **CPU provider**로 실행됐고 diffusion은 CUDA로 실행됐다. 로컬 베이스에는 safety checker가 없었다. 출력 1장으로 목표 나이 정확도·동일인 유지·인구집단 일반화를 평가하기에는 부족하다.
 
 ## 출력과 테스트
 
@@ -166,14 +166,16 @@ PYTHONPATH=. OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 .venv/bin/python \
 
 - 생성 테스트: **39/39 통과**, 실패·오류·스킵 0. 기존 29개와 신규 데이터·학습 래퍼 계약 10개다.
 - 전체 테스트: **52개 중 50 통과, 2 스킵**, 실패·오류 0.
-- 스킵: `test_smoke_model_requires_explicit_override`는 기존 smoke ONNX가 없고, `test_training_and_inference_alignment_matches`는 준비된 실제 AI Hub 얼굴 fixture가 없다. FFHQ로 대체하거나 성공 처리하지 않았다.
-- 표준 재실행 명령은 `.venv/bin/python -m unittest discover -s tests -p 'test_gen_*.py' -v` 및 `.venv/bin/python -m unittest discover -s tests -v`다. CPU·가짜 런타임 계약 테스트와 이번 실제 GPU 결과는 별도 증거다.
+- 스킵: `test_smoke_model_requires_explicit_override`는 기존 smoke ONNX 부재, `test_training_and_inference_alignment_matches`는 준비된 실제 AI Hub 얼굴 fixture 부재로 스킵했다. FFHQ로 대체하지 않았으며 두 테스트는 통과 수에서 제외했다.
+- 당시 표준 재실행 명령은 `.venv/bin/python -m unittest discover -s tests -p 'test_gen_*.py' -v` 및 `.venv/bin/python -m unittest discover -s tests -v`다. CPU·mock 런타임 계약 테스트와 이번 실제 GPU 결과는 별도 증거다.
 
-## 남은 한계와 다음 단계
+## 당시 한계와 후속 과제
+
+다음은 12-step 검증 종료 시점에 정리한 한계와 후속 과제다.
 
 1. 이미지 ID·파일 해시 중복 제거와 **동일인 분리**는 다르다. `person_id`가 없으므로 임베딩 기반 후보 조사와 적절한 검토 후 인물 단위 split을 검증해야 한다.
-2. 청소년·고연령 표본 부족과 연령·성별별 성능 차이를 평가해야 한다. 원본 70~120세 그룹의 캡션은 `70s`이므로 정확한 70대 라벨로 해석하지 않는다. 이번에는 캡션을 임의로 수정하지 않았다.
-3. 12 step은 수렴·장시간 안정성·학습 효과를 입증하지 않는다. 이 설정을 출발점으로 충분히 학습하고 val만으로 LR·epoch·alpha·adapter scale을 선택한 뒤 고정 설정으로 test를 평가해야 한다.
+2. 청소년·고연령 표본 부족과 연령·성별별 성능 차이를 평가해야 한다. 원본 70~120세 그룹의 캡션 `70s`는 원본 연령 구간과 범위가 다르다. 이번 검증에서는 캡션을 수정하지 않았다.
+3. 12 step으로는 수렴·장시간 안정성·학습 효과를 판단하기에 부족하다. 이 설정을 출발점으로 충분히 학습하고 val만으로 LR·epoch·alpha·adapter scale을 선택한 뒤 고정 설정으로 test를 평가하는 것이 후속 과제였다.
 4. 실제 상태 재개는 성공했지만 데이터 순서까지 중단 없는 실행과 bitwise 동일함을 확인하지 않았다. 엄밀한 재현성이 필요하면 mid-epoch dataloader 재개 위치를 별도로 검증해야 한다.
 5. val/test 전체 생성·MAE·ArcFace 품질 비교·공정성 평가·장기 OOM/열 안정성 검사는 **미실행**이다. 정식 나이 ONNX도 없으며 기존 임시 모델을 정확도 평가에 쓰지 않았다.
 6. CC BY-NC-SA 4.0 데이터·메타데이터 조건과 이미지별 저작자·라이선스, FaceID/InsightFace 연구용 제약을 계속 준수한다. 개별 동의나 상업적 초상 이용 허가는 검증하지 않았다.

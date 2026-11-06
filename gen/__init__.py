@@ -1,4 +1,4 @@
-"""Midterm generation interfaces; real models and explicit mocks stay separate."""
+"""Generation interfaces with separate real and mock implementations."""
 
 
 class GenerationError(RuntimeError):

@@ -2,7 +2,7 @@
 
 Run conditions separately with --baseline / --checkpoint LABEL=PATH, then use
 --combine DIR... to assemble paired tables and visual-review sheets on CPU.
-This is deliberately separate from gen.eval, whose real MAE requires age ONNX.
+MAE evaluation uses gen.eval and requires an age ONNX model.
 """
 import argparse
 from collections import Counter
@@ -495,7 +495,7 @@ def _read_results(directory, summary):
 
 
 def combine_results(directories, output):
-    """CPU-only aggregation; no inference or retroactive removal of failed rows."""
+    """Aggregate recorded results, including failed attempts, on CPU."""
     output = Path(output)
     if output.exists():
         raise FileExistsError('--output must be a new directory')
