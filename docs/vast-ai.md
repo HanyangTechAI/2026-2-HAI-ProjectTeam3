@@ -4,6 +4,22 @@
 
 이미지 이름은 `ghcr.io/hanyangtechai/hai-photobooth`입니다. **Actions의 해당 실행이 성공해야 사용할 이미지가 게시된 것입니다.** 이 문서나 Dockerfile이 GitHub에 있다는 사실만으로 이미지 게시가 완료된 것은 아닙니다.
 
+### 첫 게시 확인: 2026-11-12
+
+[첫 GitHub Actions 실행](https://github.com/HanyangTechAI/2026-2-HAI-ProjectTeam3/actions/runs/43229954790)이 성공했고 다음 이미지를 GHCR에 게시했습니다. Vast 템플릿에 복사할 고정 버전 주소입니다.
+
+```text
+ghcr.io/hanyangtechai/hai-photobooth:sha-beaec52a80c781ab90f1f93bbbea3f0ce51d4134-43229954790-1
+```
+
+이미지 내용의 정확한 digest:
+
+```text
+ghcr.io/hanyangtechai/hai-photobooth@sha256:e9b64d074a0a72bb9acb1992f64f711da4f4554be1b8185d509d7a7f24ba72ed
+```
+
+작업 폴더·자산 보존 테스트 24개가 통과했고, 이미지 내부의 기존 main 테스트 236개 중 232개가 통과하고 4개가 건너뛰어졌습니다. 세 환경의 import, 네 브랜치의 CLI, 생성 Mock, FastAPI Mock·QR·사진 다운로드, Pi UI·직렬 출력 변환의 하드웨어 Mock, 공식 FLUX.3 학습기 CLI도 통과했습니다. 실제 GPU·모델 가중치·Pi 하드웨어 실행은 검증하지 않았습니다. 최초 사용 전 아래 GHCR 공개 설정을 확인합니다.
+
 ## 1. 이미지에 포함되는 환경
 
 Ubuntu 22.04·CUDA 12.8.1·Python 3.11을 기반으로 `linux/amd64`용 이미지를 만듭니다. 기본 이미지의 정확한 digest는 [Dockerfile](../docker/Dockerfile)에, Python 의존성은 [docker 디렉터리](../docker/)의 고정 파일에 기록합니다. NVIDIA 드라이버는 Vast 호스트에서 제공하며 이미지에 설치하지 않습니다.
