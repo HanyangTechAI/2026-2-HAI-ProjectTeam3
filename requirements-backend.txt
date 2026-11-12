@@ -1,0 +1,8 @@
+fastapi==0.162.4
+numpy==2.2.6
+onnxruntime==1.23.2
+pillow==12.1.1
+python-multipart==0.0.32
+qrcode==8.2
+requests==2.32.5
+uvicorn==0.54.0

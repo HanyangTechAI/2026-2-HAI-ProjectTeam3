@@ -1,79 +1,90 @@
 import io
+import os
 import time
+import uuid
+from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import Response, JSONResponse
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi.responses import Response, FileResponse
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import qrcode
 import onnxruntime as ort
 
+from gen.booth import run_booth, compose_four_cut, MockAgeEstimator
+from gen.pipeline import PipelineConfig, AgeShiftPipeline, MockPipeline
+
 app = FastAPI(
     title="AI Timemachine Photobooth API",
-    description="FastAPI Backend for Age Estimation, Receipt Printing, and QR Code Generation",
-    version="1.0.0"
+    description="FastAPI Backend for Age Estimation, 4-Cut Timemachine Generation, and Receipt QR",
+    version="2.0.0"
 )
 
-# -------------------------------------------------------------------
-# 1. ONNX 나이 추정 모델 로드 (CPU Provider)
-# -------------------------------------------------------------------
-MODEL_PATH = "outputs/smoke/smoke_only.onnx"
-ort_session: Optional[ort.InferenceSession] = None
+OUTPUT_PHOTOS_DIR = Path("outputs/photos")
+OUTPUT_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
 
+KOREAN_FONT_PATH = "/usr/share/fonts/truetype/nanum/NanumSquareRoundB.ttf"
+MODEL_PATH = "outputs/smoke/smoke_only.onnx"
+
+ort_session: Optional[ort.InferenceSession] = None
 try:
-    # CPU 전용 추정 실행자 설정
-    ort_session = ort.InferenceSession(MODEL_PATH, providers=['CPUExecutionProvider'])
-    print(f"[SUCCESS] ONNX Model loaded successfully from {MODEL_PATH}")
+    ort_session = ort.InferenceSession(MODEL_PATH, providers=["CPUExecutionProvider"])
+    print(f"[SUCCESS] ONNX Model loaded from {MODEL_PATH}")
 except Exception as e:
-    print(f"[WARNING] Could not load ONNX model at startup: {e}")
+    print(f"[WARNING] Could not load ONNX model: {e}")
+
+USE_MOCK_GEN = os.getenv("USE_MOCK_GEN", "true").lower() == "true"
+GEN_DEVICE = os.getenv("GEN_DEVICE", "cpu")
+
+pipeline_config = PipelineConfig(
+    base_model="" if USE_MOCK_GEN else os.getenv("BASE_MODEL_PATH", ""),
+    device=GEN_DEVICE,
+)
+booth_generator = MockPipeline(mode="faceid_age") if USE_MOCK_GEN else AgeShiftPipeline(pipeline_config, mode="faceid_age")
 
 
 def preprocess_image_for_onnx(image_bytes: bytes) -> np.ndarray:
-    """전달받은 바이트 이미지를 ONNX 모델 입력 규격(1, 3, 224, 224)으로 전처리"""
     img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img = img.resize((224, 224))
-    
-    # [0, 1] 정규화 및 NCHW 형태로 변환
     arr = np.array(img, dtype=np.float32) / 255.0
-    arr = np.transpose(arr, (2, 0, 1))  # HWC -> CHW
-    arr = np.expand_dims(arr, axis=0)    # CHW -> NCHW
+    arr = np.transpose(arr, (2, 0, 1))
+    arr = np.expand_dims(arr, axis=0)
     return arr
 
 
-# -------------------------------------------------------------------
-# 2. API Endpoints
-# -------------------------------------------------------------------
+def estimate_age_from_pil(pil_img: Image.Image) -> float:
+    if not ort_session:
+        return 25.0
+    img = pil_img.convert("RGB").resize((224, 224))
+    arr = np.array(img, dtype=np.float32) / 255.0
+    arr = np.transpose(arr, (2, 0, 1))
+    arr = np.expand_dims(arr, axis=0)
+    input_name = ort_session.get_inputs()[0].name
+    outputs = ort_session.run(None, {input_name: arr})
+    return round(float(np.squeeze(outputs[0])), 1)
+
 
 @app.get("/")
 def health_check():
-    """서버 헬스체크"""
     return {
         "status": "healthy",
         "onnx_model_loaded": ort_session is not None,
-        "device": "CPU"
+        "mock_generation_mode": USE_MOCK_GEN,
+        "device": GEN_DEVICE
     }
 
 
 @app.post("/api/v1/predict-age")
 async def predict_age(file: UploadFile = File(...)):
-    """
-    [1단계: 나이 추정]
-    카메라로 입력받은 이미지를 전처리하여 ONNX 모델로 추정 나이(Age) 반환
-    """
     if not ort_session:
         raise HTTPException(status_code=500, detail="ONNX Model session is not initialized.")
-    
     try:
         image_bytes = await file.read()
         input_tensor = preprocess_image_for_onnx(image_bytes)
-        
-        # ONNX 추정 실행
         input_name = ort_session.get_inputs()[0].name
         outputs = ort_session.run(None, {input_name: input_tensor})
-        
-        # 추정 결과 파싱 (모델 output 형태에 맞게 조정)
         predicted_age = float(np.squeeze(outputs[0]))
-        
         return {
             "status": "success",
             "filename": file.filename,
@@ -83,14 +94,57 @@ async def predict_age(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"Image processing error: {str(e)}")
 
 
+@app.post("/api/v1/generate-timemachine-photo")
+async def generate_timemachine_photo(
+    request: Request,
+    file: UploadFile = File(...),
+    target_age: Optional[int] = Form(None),
+    seed: int = Form(42)
+):
+    try:
+        image_bytes = await file.read()
+        pil_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+        current_age = float(target_age) if target_age is not None else estimate_age_from_pil(pil_img)
+        estimator = MockAgeEstimator(age=current_age)
+
+        result = run_booth(pil_img, estimator, booth_generator, seed=seed)
+        four_cut_sheet = compose_four_cut(result["frames"], cell_size=(512, 512))
+
+        filename = f"timemachine_{int(time.time())}_{uuid.uuid4().hex[:6]}.png"
+        save_path = OUTPUT_PHOTOS_DIR / filename
+        four_cut_sheet.save(save_path, format="PNG")
+
+        base_url = str(request.base_url).rstrip("/")
+        if request.headers.get("x-forwarded-proto") == "https" and base_url.startswith("http://"):
+            base_url = "https://" + base_url[len("http://"):]
+
+        download_url = f"{base_url}/photos/{filename}"
+
+        return {
+            "status": "success",
+            "estimated_age": current_age,
+            "targets": result["metadata"]["targets"],
+            "is_mock": result["metadata"]["is_mock"],
+            "filename": filename,
+            "download_url": download_url
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Timemachine generation error: {str(e)}")
+
+
+@app.get("/photos/{filename}")
+async def download_photo(filename: str):
+    safe_name = Path(filename).name
+    file_path = OUTPUT_PHOTOS_DIR / safe_name
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return FileResponse(path=file_path, media_type="image/png", filename=safe_name)
+
+
 @app.get("/api/v1/generate-qr")
 async def generate_qr(url: str, text: Optional[str] = "AI 타임머신이 보낸 당신의 미래 사진"):
-    """
-    [3단계: 영수증 프린터 연동용 QR 생성]
-    고화질 사진 다운로드 URL을 받아 QR 코드를 생성하고, 하단에 텍스트를 합성한 1-bit Image 반환
-    """
     try:
-        # 1. QR 코드 생성 (흑백)
         qr = qrcode.QRCode(
             version=1,
             error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -100,42 +154,23 @@ async def generate_qr(url: str, text: Optional[str] = "AI 타임머신이 보낸
         qr.add_data(url)
         qr.make(fit=True)
         qr_img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
-        
-        # 2. 영수증 인쇄 레이아웃 합성 (QR + 하단 텍스트)
+
         w, h = qr_img.size
-        canvas_h = h + 40
+        canvas_h = h + 48
         canvas = Image.new("RGB", (w, canvas_h), "white")
         canvas.paste(qr_img, (0, 0))
-        
+
         draw = ImageDraw.Draw(canvas)
-        # 기본 폰트 사용 (필요 시 custom 폰트로 교체)
-        draw.text((w // 2, h + 10), text, fill="black", anchor="mm")
-        
-        # 3. PNG 바이트 반환
+        if Path(KOREAN_FONT_PATH).is_file():
+            font = ImageFont.truetype(KOREAN_FONT_PATH, size=15)
+        else:
+            font = ImageFont.load_default()
+
+        draw.text((w // 2, h + 20), text, fill="black", font=font, anchor="mm")
+
         buf = io.BytesIO()
         canvas.save(buf, format="PNG")
         return Response(content=buf.getvalue(), media_type="image/png")
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"QR generation error: {str(e)}")
-
-
-@app.post("/api/v1/generate-timemachine-photo")
-async def generate_timemachine_photo(
-    file: UploadFile = File(...),
-    target_age: int = Form(...),
-    prompt: Optional[str] = Form("A photo of a person")
-):
-    """
-    [2단계: 11/13 GPU 서버 연동을 위한 Dummy 생성 엔드포인트]
-    GPU 서버 투입 전 백엔드 흐름 테스트용 (더미 결과 반환)
-    """
-    # 11/13 GPU 서버 준비 시 Diffusers / SD 3.5 파이프라인으로 교체되는 구역
-    time.sleep(1.0) # 더미 추론 시간
-    
-    return {
-        "status": "success",
-        "target_age": target_age,
-        "message": "GPU model pipeline placeholder. Will be updated on 11/13.",
-        "download_url": f"https://trycloudflare.com/photos/dummy_{int(time.time())}.jpg"
-    }
