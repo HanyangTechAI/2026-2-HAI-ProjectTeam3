@@ -1,0 +1,9 @@
+# Only image recipes and runtime helpers enter the build context.
+# Project branches are fetched by exact commit in seed_sources.py.
+**
+!docker/
+!docker/**
+docker/**/__pycache__/
+docker/**/*.pyc
+docker/**/.env
+docker/**/.env.*

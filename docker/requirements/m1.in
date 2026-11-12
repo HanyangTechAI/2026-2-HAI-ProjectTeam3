@@ -1,0 +1,25 @@
+# Future M1 reference tooling is isolated from the project's Diffusers 0.35.1 runner.
+-r ../../requirements.txt
+torch==2.8.0+cu128
+torchvision==0.23.0+cu128
+diffusers==0.42.0
+transformers==5.22.2
+peft==0.21.2
+accelerate==1.15.0
+safetensors==0.8.0
+huggingface-hub>=1.32,<2
+numpy==2.4.6
+Pillow==12.3.0
+onnxruntime==1.31.0
+scikit-image==0.26.0
+datasets==4.2.0
+bitsandbytes==0.50.2
+sentencepiece==0.2.3
+protobuf>=4.25.8,<7
+tensorboard
+timm
+ftfy
+ninja==1.13.2
+pip
+setuptools
+wheel

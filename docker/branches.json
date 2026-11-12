@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "repository_url": "https://github.com/HanyangTechAI/2026-2-HAI-ProjectTeam3.git",
+  "source_seed": "/opt/hai/source",
+  "default_branch": "main",
+  "branches": {
+    "main": {
+      "commit": "2457c3c8fa27b7598060272e75cefd79599ffc3d",
+      "environment": "main"
+    },
+    "feat/generation-midterm": {
+      "commit": "229a223d5f416465b4e92d471ef8f2e219498fa9",
+      "environment": "main"
+    },
+    "feat/raspi-fastapi-pipeline": {
+      "commit": "c4b337a26afbdcc497a0229d5d9eeb69d525f188",
+      "environment": "web"
+    },
+    "feat/raspi-client": {
+      "commit": "38630791ad9926e17650fc6dd8da5b33973c974c",
+      "environment": "web"
+    }
+  },
+  "environments": {
+    "main": "/venv/main",
+    "web": "/venv/web",
+    "m1": "/venv/m1"
+  },
+  "assets": {
+    "sam_repository": "/opt/hai/third_party/SAM",
+    "lora_training_script": "/opt/hai/tools/train_text_to_image_lora.py"
+  }
+}

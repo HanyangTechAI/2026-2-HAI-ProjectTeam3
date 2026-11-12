@@ -1,0 +1,22 @@
+# Reproduce the project's documented SD1.5 / FaceID / Age LoRA environment.
+# The CUDA backend is selected by the lock-generation command, not by system pip.
+-r ../../requirements-lora.txt
+torch==2.8.0+cu128
+torchvision==0.23.0+cu128
+diffusers==0.35.1
+transformers==4.57.6
+peft==0.17.1
+accelerate==1.15.0
+safetensors==0.8.0
+huggingface-hub==0.36.2
+onnxruntime==1.31.0
+numpy==2.4.6
+Pillow==12.3.0
+scikit-image==0.26.0
+datasets==4.2.0
+ninja==1.13.2
+pip
+setuptools
+wheel
+ipykernel>=6,<8
+ipywidgets>=8,<9

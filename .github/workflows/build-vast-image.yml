@@ -1,0 +1,131 @@
+name: Build HAI Vast image
+
+on:
+  push:
+    branches:
+      - main
+      - feat/vast-dev-image
+    paths:
+      - docker/**
+      - .dockerignore
+      - .github/workflows/build-vast-image.yml
+      - tests/test_docker_*.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vast-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/hanyangtechai/hai-photobooth
+
+jobs:
+  build-and-publish:
+    # Publishing runs only on the two maintained branches of the source repo.
+    # No pull_request_target or fork code runs with package write permission.
+    if: >-
+      github.repository == 'HanyangTechAI/2026-2-HAI-ProjectTeam3' &&
+      (github.ref == 'refs/heads/main' ||
+       github.ref == 'refs/heads/feat/vast-dev-image')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check workspace and asset helpers
+        run: python3 -m unittest discover -s tests -p 'test_docker_*.py' -v
+
+      - name: Free space for CUDA and three Python environments
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+          # These unused SDKs belong to this disposable GitHub-hosted runner.
+          # Do not remove the checkout, Docker, Python, or the entire tool cache.
+          sudo rm -rf -- /usr/local/lib/android /usr/share/dotnet \
+            /usr/local/.ghcup /usr/share/swift "${RUNNER_TOOL_CACHE:?}/CodeQL"
+          df -h /
+
+      - name: Select image tags
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A rerun gets a new version tag, so an earlier build stays addressable.
+          version="sha-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            channel=main
+          else
+            channel=dev
+          fi
+          {
+            printf 'version=%s\n' "$version"
+            printf 'channel=%s\n' "$channel"
+            printf 'tags<<HAI_TAGS\n'
+            printf '%s:%s\n' "$IMAGE_NAME" "$version"
+            printf '%s:%s\n' "$IMAGE_NAME" "$channel"
+            printf 'HAI_TAGS\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          platforms: linux/amd64
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build, verify on CPU, and publish
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/HanyangTechAI/2026-2-HAI-ProjectTeam3
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=HAI PhotoBooth development environment
+          # The Dockerfile runs /opt/hai/verify_image.py before export. A failed
+          # dependency/import/mock check prevents either tag from being pushed.
+          # Inline cache avoids a separate multi-GB GitHub Actions cache archive.
+          cache-from: |
+            type=registry,ref=ghcr.io/hanyangtechai/hai-photobooth:dev
+            type=registry,ref=ghcr.io/hanyangtechai/hai-photobooth:main
+          cache-to: type=inline
+          provenance: mode=min
+
+      - name: Record the exact image for Vast.ai
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          VERSION_TAG: ${{ steps.image.outputs.version }}
+          CHANNEL_TAG: ${{ steps.image.outputs.channel }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            printf '## Published HAI Vast image\n\n'
+            printf '| Reference | Value |\n| --- | --- |\n'
+            printf '| Fixed digest | `%s@%s` |\n' "$IMAGE_NAME" "$IMAGE_DIGEST"
+            printf '| Version tag | `%s:%s` |\n' "$IMAGE_NAME" "$VERSION_TAG"
+            printf '| Moving channel | `%s:%s` |\n\n' "$IMAGE_NAME" "$CHANNEL_TAG"
+            printf 'CPU dependency/import/mock checks passed during the build. '
+            printf 'GPU execution, model weights, generation quality, and Raspberry Pi hardware were not tested by this runner.\n\n'
+            printf 'On first publication, check the package visibility before an anonymous Vast.ai pull. '
+            printf 'See [the complete setup guide](https://github.com/HanyangTechAI/2026-2-HAI-ProjectTeam3/blob/%s/docs/vast-ai.md).\n' "$GITHUB_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"

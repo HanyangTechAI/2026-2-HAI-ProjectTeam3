@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "base_image": "vastai/base-image:cuda-12.8.1-cudnn-devel-ubuntu22.04-py311@sha256:cf12789c494089adac60f8a9a7042cea80eb96b13aff66d0f49bcf7c732b18ce",
+  "base_amd64_digest": "sha256:cacb039fc28815963dfc14060a8d686361b2d90b8f3d35ac6f3f11f893cb2ca1",
+  "uv": {
+    "version": "0.13.6",
+    "url": "https://files.pythonhosted.org/packages/5c/43/0688ff5142934238f2812e348f4a24e09b57d48bfb38dd8f850325a0d9de/uv-0.13.6-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+    "sha256": "22759b8895e1103578de6fb4cd27e94b4399d021023378d29f01333717751fba"
+  },
+  "kilo": {
+    "version": "7.8.27",
+    "package": "@kilocode/cli-linux-x64-baseline",
+    "url": "https://registry.npmjs.org/@kilocode/cli-linux-x64-baseline/-/cli-linux-x64-baseline-7.8.27.tgz",
+    "integrity": "sha512-9zsrFkfe+rIyuGM//Tdvw2DF/gtBJEfBjhi3408J4So1ddMS/rg/nR45sny22OpU3Wznlj9sIhCI9P6N6nZlcg=="
+  },
+  "sam": {
+    "repository_url": "https://github.com/yuval-alaluf/SAM.git",
+    "commit": "c1895aef275e702fba7560284dc16df60d65210e",
+    "destination": "/opt/hai/third_party/SAM"
+  },
+  "scripts": [
+    {
+      "name": "train_text_to_image_lora.py",
+      "version": "diffusers 0.35.1",
+      "commit": "0f252be0ed42006c125ef4429156cb13ae6c1d60",
+      "url": "https://raw.githubusercontent.com/huggingface/diffusers/0f252be0ed42006c125ef4429156cb13ae6c1d60/examples/text_to_image/train_text_to_image_lora.py",
+      "sha256": "3dcc88d582bb9f20d4e72278f0a76749a1190ed43a6521b2cdb297efa512136a"
+    },
+    {
+      "name": "train_dreambooth_lora_flux3_klein_img2img.py",
+      "version": "diffusers 0.42.0",
+      "commit": "95f9b8925c34469ccac829866d7ad4e3fca1bd89",
+      "url": "https://raw.githubusercontent.com/huggingface/diffusers/95f9b8925c34469ccac829866d7ad4e3fca1bd89/examples/dreambooth/train_dreambooth_lora_flux3_klein_img2img.py",
+      "sha256": "7d754eadaa3979d57ac78d8184888cea0c5da40752319e6525340ae3ca1d64ca"
+    }
+  ]
+}

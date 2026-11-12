@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "baseline": [
+      {
+        "name": "Realistic Vision V5.1 Diffusers weights",
+        "repo_id": "SG161222/Realistic_Vision_V5.1_noVAE",
+        "revision": "1e9f017a7b1eaefb63a1900ea6c5953d2739fd21",
+        "target": "generation/realistic-vision-v5.1",
+        "patterns": ["model_index.json", "scheduler/*", "tokenizer/*", "text_encoder/*.json", "text_encoder/*.safetensors", "unet/*.json", "unet/*.safetensors", "vae/*.json", "vae/*.safetensors", "README.md"]
+      },
+      {
+        "name": "IP-Adapter FaceID Plus v2 and its matching LoRA",
+        "repo_id": "h94/IP-Adapter-FaceID",
+        "revision": "43907e6f44d079bf1a9102d9a6e56aef7a219bae",
+        "target": "generation",
+        "patterns": ["ip-adapter-faceid-plusv2_sd15.bin", "ip-adapter-faceid-plusv2_sd15_lora.safetensors"]
+      },
+      {
+        "name": "CLIP image encoder",
+        "repo_id": "h94/IP-Adapter",
+        "revision": "018e402774aeeddd60609b4ecdb7e298259dc729",
+        "target": "generation/clip-vit-h-14",
+        "strip_prefix": "models/image_encoder",
+        "patterns": ["models/image_encoder/config.json", "models/image_encoder/model.safetensors"]
+      },
+      {
+        "name": "CLIP preprocessing configuration",
+        "repo_id": "laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+        "revision": "1c2b8495b28150b8a4922ee1c8edee224c284c0c",
+        "target": "generation/clip-vit-h-14",
+        "patterns": ["preprocessor_config.json"]
+      }
+    ],
+    "m1": [
+      {
+        "name": "FLUX 3 Image Klein Base (Diffusers BF16 layout only)",
+        "repo_id": "black-forest-labs/flux-3-image-klein-base",
+        "revision": "a83ce283b1daa2f3d782645ae7b06c8e73af1b41",
+        "target": "m1/flux-3-image-klein-base",
+        "patterns": ["modular_model_index.json", "transformer/*", "vae/*", "text_encoder/*", "README.md", "LICENSE.md", "NOTICE.md"]
+      },
+      {
+        "name": "FLUX 3 prompt upsampler",
+        "repo_id": "black-forest-labs/flux-3-image-klein-pup",
+        "revision": "a57899549f8f6f64c6c4d88db30827d496ff76d0",
+        "target": "m1/flux-3-image-klein-pup",
+        "patterns": ["*.json", "*.safetensors", "*.txt", "*.jinja", "README.md", "LICENSE.md", "NOTICE.md"]
+      }
+    ]
+  }
+}
