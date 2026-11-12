@@ -85,7 +85,7 @@ GitHub 저장소가 공개여도 **처음 올린 GHCR 패키지는 기본적으�
 
 ## 4. GPU와 저장공간 선택
 
-NVIDIA GPU가 있는 `amd64` 호스트를 고릅니다. CUDA 12.8 이미지와 PyTorch가 요구하는 드라이버·GPU 아키텍처 조건을 충족하는지 확인합니다. CUDA 주 버전만 같다는 이유로 모든 GPU·드라이버 조합의 동작을 보장하지는 않습니다. [NVIDIA 호환성 문서](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)에는 PTX와 새 기능의 추가 조건도 설명되어 있습니다.
+NVIDIA GPU가 있고 **직접 연결할 공개 포트가 있는 `amd64` 호스트**를 고릅니다. 호스트의 Direct Ports 지원을 확인합니다. 이 템플릿의 자체 SSH 서버는 내부 22/TCP에 연결된 공개 포트를 사용하며 Vast의 SSH proxy 제공을 전제로 하지 않습니다. CUDA 12.8 이미지와 PyTorch가 요구하는 드라이버·GPU 아키텍처 조건도 충족해야 합니다. CUDA 주 버전만 같다는 이유로 모든 GPU·드라이버 조합의 동작을 보장하지는 않습니다. [NVIDIA 호환성 문서](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html)에는 PTX와 새 기능의 추가 조건도 설명되어 있습니다.
 
 VRAM은 사용할 작업에 맞춰 선택합니다. 기존 SD1.5 생성 성공 기록과 M1 학습 요구량은 서로 다른 기준입니다. 이미지가 설치된다는 사실이 특정 GPU에서 모든 학습·생성이 가능하다는 뜻은 아닙니다. 모델을 준비한 뒤 작은 실행으로 실제 최대 사용량을 측정합니다.
 
@@ -100,7 +100,13 @@ VRAM은 사용할 작업에 맞춰 선택합니다. 기존 SD1.5 생성 성공 �
 
 ## 5. SSH 접속과 작업 폴더
 
-이미지 다운로드와 초기화가 끝나면 인스턴스의 **Connect**에서 안내하는 SSH 명령을 로컬 터미널에 그대로 실행합니다. 공개 포트는 임대할 때 배정되므로 임의로 `22`를 사용하지 않습니다.
+이미지 다운로드와 초기화가 끝나면 인스턴스의 **IP Port Info**에서 내부 **22/TCP**에 연결된 공개 IP와 외부 포트를 확인합니다. 공개 포트는 임대할 때 배정되므로 임의로 `22`를 사용하지 않습니다. 로컬 PC에서 아래 값을 실제 정보로 바꿔 실행합니다.
+
+```bash
+ssh -p SSH_PORT root@SERVER_IP
+```
+
+등록한 공개키와 짝을 이루는 개인키가 기본 키 경로에 없으면 `-i /path/to/private_key`도 지정합니다. **Connect**에 이 직접 연결 명령이 표시되면 그대로 사용할 수 있습니다. Entrypoint 모드에서는 자동 생성되는 접속 명령이나 SSH proxy가 항상 제공되는 것은 아닙니다. 근거: [Vast 접속 방식](https://docs.vast.ai/guides/instances/connect/overview).
 
 서버에 접속한 뒤:
 
@@ -161,10 +167,10 @@ hai run main -- python -m gen.smoke --output outputs/vast_mock_001
 | 기존 `outputs/`의 체크포인트·실험 기록 | 해당 브랜치의 `/workspace/hai/outputs/<브랜치 폴더명>/` |
 | SAM 등 별도 실험 모델 | `/workspace/hai/shared/models/` 아래에 배치하고 해당 실험 설정에서 경로 지정 |
 
-예를 들어 **로컬 PC의 기존 프로젝트 루트**에서 전송할 때, 아래 두 변수만 Vast Connect 화면의 실제 사용자·IP·포트로 바꿉니다. PC에도 rsync가 설치되어 있어야 합니다.
+예를 들어 **로컬 PC의 기존 프로젝트 루트**에서 전송할 때, 아래 두 변수의 IP·포트를 Vast IP Port Info의 실제 값으로 바꿉니다. PC에도 rsync가 설치되어 있어야 합니다.
 
 ```bash
-HAI_SSH_DEST='USER@SERVER_IP'
+HAI_SSH_DEST='root@SERVER_IP'
 HAI_SSH_PORT='SSH_PORT'
 rsync -avP -e "ssh -p ${HAI_SSH_PORT}" models/ "${HAI_SSH_DEST}:/workspace/hai/shared/models/"
 rsync -avP -e "ssh -p ${HAI_SSH_PORT}" data/ "${HAI_SSH_DEST}:/workspace/hai/shared/data/"
@@ -219,10 +225,10 @@ hai-models download m1
 hai run feat/raspi-fastapi-pipeline -- env USE_MOCK_GEN=true GEN_DEVICE=cpu python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-로컬 PC의 다른 터미널에서 Connect 화면의 실제 SSH 정보로 터널을 엽니다.
+로컬 PC의 다른 터미널에서 IP Port Info의 실제 SSH 정보로 터널을 엽니다.
 
 ```bash
-ssh -p SSH_PORT -N -L 8000:127.0.0.1:8000 USER@SERVER_IP
+ssh -p SSH_PORT -N -L 8000:127.0.0.1:8000 root@SERVER_IP
 ```
 
 이후 PC 브라우저에서 `http://127.0.0.1:8000/`로 상태를 확인하고 `http://127.0.0.1:8000/docs`에서 API를 확인합니다. 기존 API에는 인증 처리가 없으므로 이 기본 절차에서는 외부에 8000 포트를 공개하지 않습니다. 태블릿/부스에서 직접 접근하는 배포는 실제 생성 연결과 접근 경로를 정리한 뒤 별도로 구성합니다. Uvicorn 옵션은 [공식 설정 문서](https://github.com/Kludex/uvicorn/blob/main/docs/settings.md), 터널 옵션은 [OpenSSH 매뉴얼](https://man.openbsd.org/ssh)에 따릅니다.
