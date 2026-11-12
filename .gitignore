@@ -31,3 +31,6 @@ AGENTS.md
 /docs/progress-summary.md
 /docs/quality-improvement-20261030.md
 /docs/quality-improvement-20261101.md
+
+# External research code cloned for local runs (SAM etc.).
+third_party/
