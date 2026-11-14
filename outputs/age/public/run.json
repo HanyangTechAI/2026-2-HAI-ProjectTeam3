@@ -1,0 +1,43 @@
+{
+  "data_dir": "data/age_public",
+  "output": "outputs/age/public",
+  "stage": "public",
+  "checkpoint": null,
+  "batch_size": 128,
+  "epochs": 30,
+  "lr": 0.0005,
+  "sigma": 2,
+  "kl_weight": 1,
+  "l1_weight": 1,
+  "weight_decay": 0.01,
+  "seed": 42,
+  "workers": 4,
+  "device": "cuda",
+  "no_pretrained": false,
+  "smoke_steps": 0,
+  "loss_direction": "KL(target || prediction)",
+  "amp": true,
+  "weights": "IMAGENET1K_V2",
+  "initialization": "imagenet",
+  "data_sources": [
+    "afad",
+    "megaage_asian"
+  ],
+  "versions": {
+    "torch": "2.8.0+cu128",
+    "torchvision": "0.23.0+cu128",
+    "numpy": "2.4.6",
+    "Pillow": "12.3.0"
+  },
+  "data_sha256": {
+    "train": "200bbe99d4c74cb41b2bfbbd555da8ba0e981f3a5966d7cb6b3ab50bab0a1461",
+    "val": "4f2214a79d9b4ebc187df1f2e2ad64ddf0a644da60968b622964e04425ba309c",
+    "test": "e1c9406b4333b3bd23204b6d13a03528e27178c29e5db52921f004ad89df7360"
+  },
+  "split_counts": {
+    "train": 162823,
+    "val": 24313,
+    "test": 20223
+  },
+  "label_note": "Dataset-provided ages may be estimates or pseudo labels, not verified ground truth."
+}

@@ -2,11 +2,21 @@
 
 얼굴 사진에서 나이를 추정하고, 같은 인물의 다양한 연령대 모습을 생성하는 **연령 변환 포토부스** 프로젝트입니다.
 
+## 나이 추정 연구 스냅샷 (2026-11-14)
+
+이 브랜치는 공개 데이터 나이 추정 실험의 코드·기록과 데이터 정보가 제거된 모델/결과 사본을 포함합니다. 데이터셋과 외부 사전학습 가중치는 포함하지 않습니다. 직접 학습한 5개 checkpoint는 Git LFS 대상이므로 `git lfs pull`로 받습니다.
+
+- [전체 실험 기록](docs/public-age-experiments-20261114.md): 다운로드, 분할, 최초 학습, sampler/크롭 변경, 정렬 실패와 재시도, 재학습 및 평가.
+- [공개 스냅샷 사용 안내](docs/public-snapshot-usage-20261114.md): 모델 로딩, 제거한 데이터 정보, 재다운로드, 평가 재현의 한계.
+- [공개 산출물 해시 명세](docs/public-artifact-manifest-20261114.json): 원본과 공개본의 해시, 제외·정제 내역.
+
+잠정 후보는 `outputs/age/public_aligned_crop_retry_v1/best.pt`입니다. 같은 정렬 validation 23,838장에 좌우 반전 평균을 적용한 MAE는 3.2373세입니다. 이는 독립 test 또는 제품 배포 성능이 아니며, 추정 라벨·동일인 누수 가능성·출처별 검은 영역 편향이 남아 있습니다. 공개 checkpoint에서 데이터 목록을 제거했으므로 기존 평가의 독립성 증명을 그대로 수행할 수 없습니다.
+
 ## 주요 기능
 
 | 기능 | 모델·학습 방식 | 현재 상태 |
 |---|---|---|
-| 나이 추정 | MobileNetV3-Large를 AI Hub 데이터로 전체 파인튜닝 | 전처리·학습·평가·ONNX 코드 구현, 실제 학습 전 |
+| 나이 추정 | MobileNetV3-Large, AI Hub 기본 경로 및 별도 AFAD/MegaAge 연구 실험 | 공개 데이터 5개 실험 완료, 정렬 후보 val MAE 3.24세; AI Hub 학습 및 제품 배포는 미완료 |
 | 연령 구간 추정 | MobileNetV3-Large를 로컬 FFHQ-Aging의 원본 10개 구간으로 파인튜닝 | 5 epoch 실학습 완료, test 100장 정확도 64%·macro-F1 0.640; 정확한 나이 회귀와 별개 |
 | 연령 변환 | Realistic Vision + IP-Adapter FaceID + Age LoRA | 단계별 학습·캡션 비교 완료, 연령 변환 품질 개선 미확인 |
 | 최소 연동 | 나이 추정 → 목표 나이 → 생성 3장 + 원본 | 호출 흐름·2×2 합성 구현, Mock으로 확인 |
@@ -50,11 +60,12 @@ requirements.txt             # 기본 의존성
 requirements-insightface.txt # 전체 InsightFace SDK 사용 시 선택 의존성
 requirements-generation.txt # 실제 생성에만 필요한 선택 의존성
 requirements-lora.txt        # 생성 환경에 추가하는 LoRA 학습 의존성
-.gitignore                   # 데이터·가중치·실행 결과 제외
+.gitignore                   # 데이터·외부 가중치 제외, 승인된 공개 산출물만 포함
+.gitattributes               # 공개 checkpoint Git LFS 설정
 README.md                    # 프로젝트 소개·실행 안내
 ```
 
-Git 저장소에는 데이터·모델 가중치·생성 결과를 포함하지 않습니다. HTTP 서버·UI·하드웨어 제어는 미구현입니다.
+이 브랜치에는 원본 데이터·외부 사전학습 가중치 대신 공개용 checkpoint, 집계와 정제한 예측 결과를 포함합니다. HTTP 서버·UI·하드웨어 제어는 미구현입니다. 아래 과거 실험의 모든 모델·데이터가 이번 서버나 스냅샷에 존재한다는 뜻은 아닙니다.
 
 ## 실험 현황 (2026-11-01)
 

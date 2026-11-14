@@ -1,0 +1,42 @@
+{
+  "data_dir": "data/age_public_aligned_retry_v1",
+  "output": "outputs/age/public_aligned_weak_retry_v1",
+  "batch_size": 128,
+  "epochs": 30,
+  "lr": 0.0005,
+  "workers": 4,
+  "seed": 42,
+  "device": "cuda",
+  "stage": "public",
+  "smoke_steps": 0,
+  "no_pretrained": false,
+  "initialization": "imagenet",
+  "weights": "IMAGENET1K_V2",
+  "loss_direction": "KL(target || prediction)",
+  "sigma": 2,
+  "kl_weight": 1,
+  "l1_weight": 1,
+  "weight_decay": 0.01,
+  "amp": true,
+  "sampler": "source_decade_inverse_sqrt_capped_5x_mean",
+  "train_transform": "resize_224x224_horizontal_flip_color_jitter_no_crop",
+  "data_sources": [
+    "afad",
+    "megaage_asian"
+  ],
+  "data_sha256": {
+    "train": "b21c6d114eda563b2a0f235676597880583b353f8cc5f5b8148b88ec3615de6e",
+    "val": "d888ea21c354a47eb0e2ee04f21956452a534573d79a143c4cb19993434c0bd8"
+  },
+  "split_counts": {
+    "train": 160590,
+    "val": 23838
+  },
+  "versions": {
+    "torch": "2.8.0+cu128",
+    "torchvision": "0.23.0+cu128",
+    "numpy": "2.4.6",
+    "Pillow": "12.3.0"
+  },
+  "label_note": "Ages may be estimated; identity and near-duplicate leakage cannot be excluded."
+}

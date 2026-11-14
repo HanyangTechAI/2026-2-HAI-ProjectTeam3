@@ -22,8 +22,8 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description='MobileNetV3-Large: KL(target || pred) + L1 expected age')
     p.add_argument('--data-dir', type=Path)
     p.add_argument('--output', type=Path)
-    p.add_argument('--stage', choices=['aihub', 'stage1', 'stage2'], default='aihub',
-                   help='Default: ImageNet backbone trained directly on AI Hub only')
+    p.add_argument('--stage', choices=['aihub', 'public', 'stage1', 'stage2'], default='aihub',
+                   help='Default: AI Hub only; public: prepared AFAD/MegaAge-Asian splits, labels not verified ground truth')
     p.add_argument('--checkpoint', type=Path, help='Required Stage 1 checkpoint for Stage 2')
     p.add_argument('--batch-size', type=int, default=128)
     p.add_argument('--epochs', type=int)
@@ -39,7 +39,8 @@ def parse_args(argv=None):
     p.add_argument('--smoke-steps', type=int, default=0, help='Limit batches per epoch; outputs are NOT trained candidates')
     args = p.parse_args(argv)
     if args.data_dir is None:
-        args.data_dir = ROOT / 'data' / {'aihub': 'age_aihub', 'stage1': 'age', 'stage2': 'age_stage2'}[args.stage]
+        args.data_dir = ROOT / 'data' / {'aihub': 'age_aihub', 'public': 'age_public',
+                                         'stage1': 'age', 'stage2': 'age_stage2'}[args.stage]
     if args.output is None:
         args.output = ROOT / 'outputs/age' / args.stage
     if args.epochs is None:
@@ -58,7 +59,8 @@ def parse_args(argv=None):
 
 
 def select_sources(datasets, stage, smoke=False):
-    wanted = {'utkface', 'afad'} if stage == 'stage1' else {'aihub'}
+    wanted = {'utkface', 'afad'} if stage == 'stage1' else (
+        {'afad', 'megaage_asian'} if stage == 'public' else {'aihub'})
     if smoke:
         wanted.add('synthetic')
     for split, ds in zip(('train', 'val', 'test'), datasets):
@@ -98,6 +100,8 @@ def main():
                versions={name: importlib.metadata.version(name) for name in ('torch', 'torchvision', 'numpy', 'Pillow')},
                data_sha256={s: sha256(args.data_dir / f'{s}.csv') for s in ('train', 'val', 'test')},
                split_counts={s: len(ds) for s, ds in zip(('train', 'val', 'test'), (train, val, test))})
+    if args.stage == 'public':
+        run['label_note'] = 'Dataset-provided ages may be estimates or pseudo labels, not verified ground truth.'
     torch.hub.set_dir(str(ROOT / 'models/torch'))
     model = build_model(not args.no_pretrained and args.stage != 'stage2').to(args.device)
     if args.stage == 'stage2':

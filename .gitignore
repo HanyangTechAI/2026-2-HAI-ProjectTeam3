@@ -6,8 +6,10 @@ __pycache__/
 # Dataset images, labels, split manifests and reports stay outside Git.
 /data/*
 !/data/README.md
-outputs/
-models/
+# Public artifact copies are tracked; external pretrained weights are downloaded.
+/models/torch/
+/models/insightface/models/
+/models/insightface/buffalo_l.zip
 *.onnx
 *.pt
 *.pth
@@ -21,6 +23,12 @@ models/
 *.tgz
 *.tar.xz
 *.7z
+# Only the five audited, dataset-free public checkpoints are tracked.
+!/outputs/age/public/best.pt
+!/outputs/age/public_balanced_v1/best.pt
+!/outputs/age/public_weak_crop_v1/best.pt
+!/outputs/age/public_aligned_crop_retry_v1/best.pt
+!/outputs/age/public_aligned_weak_retry_v1/best.pt
 .env
 .env.*
 !.env.example
@@ -32,5 +40,4 @@ AGENTS.md
 /docs/quality-improvement-20261030.md
 /docs/quality-improvement-20261101.md
 
-# External research code cloned for local runs (SAM etc.).
-third_party/
+# SAM is represented by a pinned upstream submodule, not a copied source tree.

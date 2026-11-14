@@ -68,6 +68,24 @@ class AgeContracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'rejects other sources'):
             select_sources([SimpleNamespace(rows=[dict(source='synthetic')])], 'aihub')
 
+    def test_public_mode_is_opt_in_and_accepts_independent_sources(self):
+        args = parse_args(['--stage', 'public'])
+        self.assertEqual(args.data_dir, ROOT / 'data/age_public')
+        self.assertEqual(args.output, ROOT / 'outputs/age/public')
+        self.assertFalse(args.no_pretrained)
+        self.assertIsNone(args.checkpoint)
+        splits = [SimpleNamespace(rows=[dict(source='afad'), dict(source='megaage_asian'),
+                                        dict(source='aihub')]),
+                  SimpleNamespace(rows=[dict(source='afad')]),
+                  SimpleNamespace(rows=[dict(source='megaage_asian')])]
+        select_sources(splits, args.stage)
+        self.assertEqual([[row['source'] for row in ds.rows] for ds in splits],
+                         [['afad', 'megaage_asian'], ['afad'], ['megaage_asian']])
+        with self.assertRaisesRegex(ValueError, 'nonempty'):
+            select_sources([SimpleNamespace(rows=[dict(source='aihub')])], 'public')
+        with self.assertRaises(SystemExit):
+            parse_args(['--stage', 'public', '--checkpoint', 'model.pt'])
+
     def test_no_person_leakage_and_reproducibility(self):
         rows = [dict(path=f'{p}_{i}.png', age=i, source='aihub', person_id=str(p),
                      original_id=f'{p}_{i}', sha256=f'hash_{p}_{i}') for p in range(20) for i in range(3)]

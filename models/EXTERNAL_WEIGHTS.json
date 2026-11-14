@@ -1,0 +1,20 @@
+{
+  "policy": "External pretrained weights intentionally not redistributed; download after reviewing their terms.",
+  "insightface": {
+    "command": "python -m age.setup_models --model-root models/insightface",
+    "url": "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip",
+    "archive_sha256": "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f",
+    "license_note": "MIT runtime code is included with LICENSE; pretrained weights are noncommercial research resources.",
+    "model_sha256": {
+      "det_10g.onnx": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91",
+      "genderage.onnx": "4fde69b1c810857b88c64a335084f1c3fe8f01246c9a191b48c7bb756d6652fb"
+    }
+  },
+  "mobilenet_v3_large": {
+    "url": "https://download.pytorch.org/models/mobilenet_v3_large-5c1a4163.pth",
+    "sha256": "5c1a416349c4cf298f2a6a5e2600ed0ee55e604713578f5e74e6bc8bcaef7997",
+    "weights": "MobileNet_V3_Large_Weights.IMAGENET1K_V2",
+    "cache_path": "models/torch/checkpoints/mobilenet_v3_large-5c1a4163.pth",
+    "note": "Training code downloads the ImageNet initialization. Loading an included trained model with build_model(False) does not need this initialization."
+  }
+}

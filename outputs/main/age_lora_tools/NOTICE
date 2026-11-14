@@ -1,0 +1,6 @@
+Hugging Face Diffusers example, v0.35.1
+Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+License: Apache License, Version 2.0 (see LICENSE in this directory).
+Source: https://raw.githubusercontent.com/huggingface/diffusers/v0.35.1/examples/text_to_image/train_text_to_image_lora.py
+SHA-256: 3dcc88d582bb9f20d4e72278f0a76749a1190ed43a6521b2cdb297efa512136a
+The local absolute symlink was replaced with the unchanged script contents.
