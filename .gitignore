@@ -41,3 +41,21 @@ AGENTS.md
 /docs/quality-improvement-20261101.md
 
 # SAM is represented by a pinned upstream submodule, not a copied source tree.
+
+# Local face-aging experiments
+/fading_*.png
+/fading_*.jpg
+/fading_*.jpeg
+/fading_*.webp
+/sam_test_front.*
+/outputs/
+/models/
+*.pt
+*.pth
+*.onnx
+*.safetensors
+.env
+.env.*
+!.env.example
+.dev.vars
+__pycache__/
