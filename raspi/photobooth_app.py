@@ -83,6 +83,8 @@ HTML_TEMPLATE = """
   #countdown { position:absolute; inset:0; display:none; align-items:center; justify-content:center;
                font-size:120px; font-weight:800; color:#fff; text-shadow:0 2px 16px rgba(0,0,0,.6);
                background:rgba(0,0,0,.25); }
+  #flash { position:absolute; inset:0; background:#fff; opacity:0;
+           transition:opacity .25s; pointer-events:none; }
   .gender { display:flex; gap:10px; margin:8px 0 14px; }
   .gender button { flex:1; padding:12px; border-radius:12px; border:2px solid #d1d1d6;
                    background:#fff; color:#1c1c1e; font-size:16px; font-weight:600; cursor:pointer; }
@@ -114,6 +116,7 @@ HTML_TEMPLATE = """
     <div class="stage">
       <img src="/video_feed" alt="웹캠">
       <div id="countdown"></div>
+      <div id="flash"></div>
     </div>
     <div class="gender">
       <button type="button" data-g="male"   onclick="pickGender('male')">남성</button>
@@ -185,10 +188,13 @@ async function startTimeTravel() {
   const cd = document.getElementById("countdown");
   cd.style.display = "flex";
   for (let n = 3; n >= 1; n--) { cd.textContent = n; await new Promise(r => setTimeout(r, 1000)); }
-  cd.textContent = "📸"; await new Promise(r => setTimeout(r, 400));
-  cd.style.display = "none";
 
-  // 촬영 + 작업 시작
+  // 셔터: 실제 촬영이 끝날 때까지 "움직이지 마세요"를 유지한다
+  cd.style.flexDirection = "column";
+  cd.innerHTML = '<div style="font-size:72px">📸</div>' +
+                 '<div style="font-size:22px;margin-top:6px">움직이지 마세요</div>';
+
+  // 촬영 + 작업 시작 (응답이 오면 사진은 이미 찍힌 상태)
   let jobId;
   try {
     const fd = new FormData();
@@ -198,8 +204,15 @@ async function startTimeTravel() {
     if (!res.ok) throw new Error(data.error || "촬영에 실패했어요.");
     jobId = data.job_id;
   } catch (e) {
+    cd.style.display = "none";
     return fail(e.message);
   }
+
+  // 찍힌 순간 화면을 하얗게 번쩍
+  cd.style.display = "none";
+  const flash = document.getElementById("flash");
+  flash.style.opacity = "1"; await new Promise(r => setTimeout(r, 120));
+  flash.style.opacity = "0"; await new Promise(r => setTimeout(r, 300));
 
   // 처리 중 화면 + 경과 시간
   show("processing");
@@ -259,29 +272,36 @@ def generate_frames():
                b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n")
 
 
-def _grab(tries):
-    """여러 장 읽어서 마지막으로 성공한 프레임을 돌려준다. 해상도 변경 직후 빈 프레임 대비."""
-    frame = None
+def _grab(warmup=2, tries=15, timeout=3.0):
+    """해상도 변경 직후의 빈/묵은 프레임 몇 장만 버리고, 그다음 첫 정상 프레임을 바로 쓴다.
+    (여러 장을 다 읽으면 고해상도에서 느린 웹캠은 촬영이 몇 초씩 늦어진다)"""
+    skipped, deadline = 0, time.monotonic() + timeout
     for _ in range(tries):
+        if time.monotonic() > deadline:
+            break
         success, f = read_camera_frame()
         if success and f is not None:
-            frame = f
-        else:
-            time.sleep(0.05)
-    return frame
+            if skipped < warmup:
+                skipped += 1
+                continue
+            return f
+        time.sleep(0.03)
+    return None
 
 
 def capture_frame():
     with camera_lock:
         try:
+            started = time.monotonic()
             camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
             camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-            frame = _grab(20)
+            frame = _grab()
             if frame is None:
                 # 고해상도를 지원하지 않는 웹캠이면 미리보기 해상도로 다시 촬영
                 camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                frame = _grab(10)
+                frame = _grab()
+            app.logger.warning("capture took %.2fs", time.monotonic() - started)
             if frame is None:
                 raise RuntimeError("Camera capture failed")
             return frame
