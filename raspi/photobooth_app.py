@@ -138,8 +138,8 @@ HTML_TEMPLATE = """
   <section id="done" class="hidden">
     <h2>🎉 시간 여행 완료!</h2>
     <div class="sub" id="ageNote"></div>
-    <div class="stage" style="aspect-ratio:1/1;background:#fff;">
-      <img id="resultImg" alt="4컷 결과">
+    <div class="stage" style="aspect-ratio:auto;background:#fff;">
+      <img id="resultImg" alt="4컷 결과" style="object-fit:contain;height:auto;">
     </div>
     <div class="sub">QR을 찍으면 고화질 사진을 받을 수 있어요.</div>
     <img id="qrImg" class="qr" alt="다운로드 QR">
@@ -335,6 +335,11 @@ def start_time_travel():
     if not capture_busy.acquire(blocking=False):
         return jsonify(error="다른 촬영이 진행 중이에요. 잠시 후 다시 시도해 주세요."), 409
     try:
+        # HAI는 한 번에 한 장만 처리하므로, 생성 중인 작업이 있으면 새 촬영을 받지 않는다.
+        with jobs_lock:
+            running = any(j.get("status") == "processing" for j in jobs.values())
+        if running:
+            return jsonify(error="지금 다른 분의 시간 여행을 만드는 중이에요. 끝나면 다시 시도해 주세요."), 409
         frame = capture_frame()
         job_id = uuid.uuid4().hex
         path = CAPTURE_DIR / f"{job_id}.jpg"
