@@ -59,3 +59,7 @@ AGENTS.md
 !.env.example
 .dev.vars
 __pycache__/
+
+/booth_capture*
+/booth_fourcut*.png
+/photobooth_raspi_app_20261124.py
