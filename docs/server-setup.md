@@ -168,7 +168,7 @@ finally:
 데이터 파일 연결만 확인하려면 프로젝트 루트에서 val 이미지로 Mock을 실행합니다. 실제 얼굴 검출·연령 변환·정확도 검증이 아닙니다.
 
 ```bash
-python -m gen.pipeline --mock --image data/lora/val/images/00033.png --targets 15 35 45 --output outputs/ffhq_val_image_mock
+python -m gen.pipeline --mock --image data/lora/val/images/EXAMPLE_ID.png --targets 15 35 45 --output outputs/ffhq_val_image_mock
 ```
 
 `gen.eval`은 JSONL 대신 별도 CSV를 읽으며 상대 경로는 CSV 디렉터리 기준입니다. 새 평가 CSV는 `../lora/val/images/...` 또는 `../lora/test/images/...`를 참조하므로 이미지 복사 없이 사용할 수 있습니다.

@@ -1,0 +1,20 @@
+{
+  "torch": "2.10.0",
+  "torchvision": "0.25.0",
+  "diffusers": "0.10.0",
+  "transformers": "4.26.1",
+  "tokenizers": "0.13.3",
+  "huggingface-hub": "0.25.2",
+  "accelerate": "0.27.2",
+  "safetensors": "0.4.5",
+  "opencv-python-headless": "4.11.0.86",
+  "fastapi": "0.115.12",
+  "uvicorn": "0.34.2",
+  "python-multipart": "0.0.20",
+  "qrcode": "8.2",
+  "onnx": "1.19.0",
+  "onnxruntime": "1.23.2",
+  "scikit-image": "0.25.2",
+  "scipy": "1.15.3",
+  "gdown": "5.2.0"
+}

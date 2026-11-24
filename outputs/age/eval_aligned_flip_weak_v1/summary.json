@@ -1,0 +1,128 @@
+{
+  "checkpoint": "outputs/age/public_aligned_weak_retry_v1/best.pt",
+  "checkpoint_sha256": "67cf1fffdbedd1703fac9522a066e73e6c529b2ae861e59196c87967c453709f",
+  "val_csv_sha256": "d888ea21c354a47eb0e2ee04f21956452a534573d79a143c4cb19993434c0bd8",
+  "flip": true,
+  "epoch": 18,
+  "metrics": [
+    {
+      "source": "afad",
+      "age_group": "10-19",
+      "count": 2400,
+      "mae": 2.4965549675623575,
+      "cs_at_5": 0.8704166666666666
+    },
+    {
+      "source": "afad",
+      "age_group": "20-29",
+      "count": 9808,
+      "mae": 2.5958605343521515,
+      "cs_at_5": 0.8696982055464927
+    },
+    {
+      "source": "afad",
+      "age_group": "30-39",
+      "count": 3949,
+      "mae": 4.884164197259566,
+      "cs_at_5": 0.6176247151177513
+    },
+    {
+      "source": "afad",
+      "age_group": "40-49",
+      "count": 189,
+      "mae": 6.365564517873936,
+      "cs_at_5": 0.5185185185185185
+    },
+    {
+      "source": "afad",
+      "age_group": "50-59",
+      "count": 22,
+      "mae": 13.27007076957009,
+      "cs_at_5": 0.22727272727272727
+    },
+    {
+      "source": "afad",
+      "age_group": "60-69",
+      "count": 14,
+      "mae": 13.760363987513951,
+      "cs_at_5": 0.35714285714285715
+    },
+    {
+      "source": "afad",
+      "age_group": "70-79",
+      "count": 4,
+      "mae": 15.095193862915039,
+      "cs_at_5": 0.25
+    },
+    {
+      "source": "afad",
+      "age_group": "all",
+      "count": 16386,
+      "mae": 3.203195140982495,
+      "cs_at_5": 0.8035518125228854
+    },
+    {
+      "source": "all",
+      "age_group": "all",
+      "count": 23838,
+      "mae": 3.276774945257794,
+      "cs_at_5": 0.7887406661632688
+    },
+    {
+      "source": "megaage_asian",
+      "age_group": "0-9",
+      "count": 873,
+      "mae": 1.8669772822013015,
+      "cs_at_5": 0.9140893470790378
+    },
+    {
+      "source": "megaage_asian",
+      "age_group": "10-19",
+      "count": 883,
+      "mae": 3.293724023607282,
+      "cs_at_5": 0.7780294450736127
+    },
+    {
+      "source": "megaage_asian",
+      "age_group": "20-29",
+      "count": 1956,
+      "mae": 2.9802622668338454,
+      "cs_at_5": 0.8297546012269938
+    },
+    {
+      "source": "megaage_asian",
+      "age_group": "30-39",
+      "count": 1457,
+      "mae": 4.024200432253113,
+      "cs_at_5": 0.6822237474262183
+    },
+    {
+      "source": "megaage_asian",
+      "age_group": "40-49",
+      "count": 1140,
+      "mae": 4.381522120090953,
+      "cs_at_5": 0.6403508771929824
+    },
+    {
+      "source": "megaage_asian",
+      "age_group": "50-59",
+      "count": 771,
+      "mae": 3.849058391209861,
+      "cs_at_5": 0.7068741893644618
+    },
+    {
+      "source": "megaage_asian",
+      "age_group": "60-69",
+      "count": 372,
+      "mae": 3.8461393130722867,
+      "cs_at_5": 0.6935483870967742
+    },
+    {
+      "source": "megaage_asian",
+      "age_group": "all",
+      "count": 7452,
+      "mae": 3.4385675744653965,
+      "cs_at_5": 0.7561728395061729
+    }
+  ]
+}

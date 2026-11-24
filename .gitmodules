@@ -1,0 +1,3 @@
+[submodule "third_party/SAM"]
+	path = third_party/SAM
+	url = https://github.com/yuval-alaluf/SAM.git

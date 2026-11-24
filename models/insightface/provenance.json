@@ -1,0 +1,28 @@
+{
+  "source_version": "v0.7",
+  "source_files": [
+    {
+      "url": "https://raw.githubusercontent.com/deepinsight/insightface/v0.7/python-package/insightface/model_zoo/scrfd.py",
+      "sha256": "64b0b787e4c235ff80c1141614a77f2b2c24c90ba5b920f1bc91fde80cbef9f9"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/deepinsight/insightface/v0.7/python-package/insightface/model_zoo/attribute.py",
+      "sha256": "90311f46c4315db31eb60cd52adc4e8819c35ccf5b814b04b3d0858f108861f7"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/deepinsight/insightface/v0.7/python-package/insightface/utils/face_align.py",
+      "sha256": "a8b34ddd06716f5ca7e7501415cbd3789ccbce18db9e557b35e537695290d922"
+    },
+    {
+      "model": "det_10g.onnx",
+      "sha256": "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91"
+    },
+    {
+      "model": "genderage.onnx",
+      "sha256": "4fde69b1c810857b88c64a335084f1c3fe8f01246c9a191b48c7bb756d6652fb"
+    }
+  ],
+  "weights_url": "https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip",
+  "archive_sha256": "80ffe37d8a5940d59a7384c201a2a38d4741f2f3c51eef46ebb28218a7b0ca2f",
+  "license": "MIT for code; pretrained weights for noncommercial research"
+}
