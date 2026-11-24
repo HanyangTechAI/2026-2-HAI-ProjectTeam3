@@ -18,15 +18,15 @@
 
 | 최종 인물 | 선택에 영향을 준 관찰 |
 |---|---|
-| [039 · 원본 19세](outputs/age-edit-20261124/sheets/039.jpg) | FADING은 고개의 기울기와 입 모양을 비교적 유지했다. 학습 후 FLUX의 세 나이는 서로 비슷했다. SAM은 나이 차이가 보였지만 편집 전 재구성부터 눈매와 고개 기울기가 달라졌다. |
-| [045 · 원본 25세](outputs/age-edit-20261124/sheets/045.jpg) | LoRA의 10세가 학습 전보다 어려 보인 것은 개선 사례다. 다만 원본에 없던 미소와 헤어라인 변화도 생겼다. FADING은 원본 표정을 더 가깝게 유지하면서 10세와 30세를 구분했다. |
-| [047 · 원본 23세](outputs/age-edit-20261124/sheets/047.jpg) | 학습 후 FLUX의 30·50세에서는 나이 차이보다 흑백 원본이 컬러로 바뀐 점이 더 눈에 띄었다. FADING은 흑백 질감과 시선을 유지했다. 단, FADING도 이 사람의 30세와 50세를 뚜렷이 구분하지 못했다. |
+| [039 · 원본 19세](../outputs/age-edit-20261124/sheets/039.jpg) | FADING은 고개의 기울기와 입 모양을 비교적 유지했다. 학습 후 FLUX의 세 나이는 서로 비슷했다. SAM은 나이 차이가 보였지만 편집 전 재구성부터 눈매와 고개 기울기가 달라졌다. |
+| [045 · 원본 25세](../outputs/age-edit-20261124/sheets/045.jpg) | LoRA의 10세가 학습 전보다 어려 보인 것은 개선 사례다. 다만 원본에 없던 미소와 헤어라인 변화도 생겼다. FADING은 원본 표정을 더 가깝게 유지하면서 10세와 30세를 구분했다. |
+| [047 · 원본 23세](../outputs/age-edit-20261124/sheets/047.jpg) | 학습 후 FLUX의 30·50세에서는 나이 차이보다 흑백 원본이 컬러로 바뀐 점이 더 눈에 띄었다. FADING은 흑백 질감과 시선을 유지했다. 단, FADING도 이 사람의 30세와 50세를 뚜렷이 구분하지 못했다. |
 
 세 사람에서 **실제 나이쌍 학습이 FLUX의 본인 모습 유지와 목표 나이 표현을 함께, 일관되게 개선했다는 근거는 없었다.** 반면 속도는 FLUX가 유리했다. 한 사람의 목표 세 장을 만드는 데 학습 후 FLUX는 31.75~37.38초, FADING은 원본 역변환을 포함해 50.35~89.91초였다(각각 모델 로딩 제외). 두 모델 모두 9장 전부 생성했다.
 
 이 판단은 3명에 대한 비맹검 관찰이다. 평가용 얼굴 검출기는 실제 원본부터 3장 중 1장만 검출했고, FADING 결과는 9장 모두 미검출이었다. 이는 생성 실패가 아니며, 자동 나이 추정값으로 모델 순위를 매기지 않았다. FADING의 성별 프롬프트는 전원 같은 `male` 조건으로 고정했으므로 다른 조건에서 결과가 같은지도 아직 모른다.
 
-[전체 결과표·재실행 명령](outputs/age-edit-20261124/RESULTS.md) · [인물별 분할](outputs/age-edit-20261124/realpairs/split.csv) · [선택한 LoRA](outputs/age-edit-20261124/trained/main/checkpoint-384/pytorch_lora_weights.safetensors). 비교판은 팀 내부 검토용이며 공개 전시용 사진이 아니다.
+[전체 결과표·재실행 명령](../outputs/age-edit-20261124/RESULTS.md) · [인물별 분할](../outputs/age-edit-20261124/realpairs/split.csv) · [선택한 LoRA](../outputs/age-edit-20261124/trained/main/checkpoint-384/pytorch_lora_weights.safetensors). 비교판은 팀 내부 검토용이며 공개 전시용 사진이 아니다.
 
 ## 2026-11-24 (UTC) | FADING의 self_replace_steps 비교
 
@@ -34,19 +34,19 @@
 
 | 비교판 | 30·50세 구분과 원본 보존에 대한 비맹검 관찰 |
 |---|---|
-| [039](outputs/fading-self-20261124/039.jpg) | 0.50은 눈가·입가의 골이 깊어 30세부터 과하게 나이 들어 보인다. 0.70은 고개 기울기와 입 모양을 유지하면서 50세의 입가 변화가 남는다. 0.80 이상에서는 차이가 약해진다. |
-| [045](outputs/fading-self-20261124/045.jpg) | 0.50에서 50세의 흰머리와 이마 주름이 가장 뚜렷하지만 입도 더 굳게 다문 모습이다. 0.70은 원본처럼 입이 조금 열린 채로 30세와 50세의 눈가·머리색이 구분된다. 0.80도 10세는 구분되지만 성인 두 장의 차이는 작다. |
-| [047](outputs/fading-self-20261124/047.jpg) | 0.50에서도 30세와 50세는 비슷하고 얼굴 전체의 반복 무늬가 더 눈에 띈다. 시선은 대체로 유지되지만 질감 변화 자체를 나이 표현 개선으로 볼 수 없다. |
+| [039](../outputs/fading-self-20261124/039.jpg) | 0.50은 눈가·입가의 골이 깊어 30세부터 과하게 나이 들어 보인다. 0.70은 고개 기울기와 입 모양을 유지하면서 50세의 입가 변화가 남는다. 0.80 이상에서는 차이가 약해진다. |
+| [045](../outputs/fading-self-20261124/045.jpg) | 0.50에서 50세의 흰머리와 이마 주름이 가장 뚜렷하지만 입도 더 굳게 다문 모습이다. 0.70은 원본처럼 입이 조금 열린 채로 30세와 50세의 눈가·머리색이 구분된다. 0.80도 10세는 구분되지만 성인 두 장의 차이는 작다. |
+| [047](../outputs/fading-self-20261124/047.jpg) | 0.50에서도 30세와 50세는 비슷하고 얼굴 전체의 반복 무늬가 더 눈에 띈다. 시선은 대체로 유지되지만 질감 변화 자체를 나이 표현 개선으로 볼 수 없다. |
 
 **판정:** 0.80이 최선이라는 근거는 없었다. 원래 표정을 유지하며 30·50세 차이를 보여주는 다음 카메라 시험의 첫 후보는 **0.70**, 대조값은 0.80이다. 독립 평가나 목표 나이 정확도 측정은 아니며 시연 기본값은 변경하지 않았다. 새 0.90과 과거 0.90의 RGB 채널 평균 절대 픽셀 차이(0–255)는 039·045에서 0.08–0.22, 047에서 10.24–10.99였다. 과거 실행을 픽셀 단위로 재현했다고 보지 않으며 설정 간 판정에는 이번 실행 결과만 썼다.
 
-[실행 스크립트](outputs/fading-self-20261124/sweep.py) · 빈 비공개 작업 폴더에서 재실행: `env PYTHONPATH=/root/.cache/fading-legacy HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TORCH_FORCE_WEIGHTS_ONLY_LOAD=1 /venv/main/bin/python /workspace/hai/outputs/fading-self-20261124/sweep.py`
+[실행 스크립트](../outputs/fading-self-20261124/sweep.py) · 빈 비공개 작업 폴더에서 재실행: `env PYTHONPATH=/root/.cache/fading-legacy HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TORCH_FORCE_WEIGHTS_ONLY_LOAD=1 /venv/main/bin/python /workspace/hai/outputs/fading-self-20261124/sweep.py`
 
 ### 포토부스 네 컷의 구도 확인
 
 새로 생성하지 않고, 기존 54장의 왼쪽 비교 원본만 FADING의 공식 `null_inversion.load_512`로 처리했다. 이 함수는 세로 사진의 위아래를 중앙 기준으로 잘라 512×512로 확대한다. 이전 비교판에서 045의 세로 원본은 폭 약 153픽셀, 생성 컷은 192픽셀로 표시돼 가로 표시 배율부터 약 1.25배 달랐다. 같은 정사각형 구도로 보니 생성 컷의 얼굴이 일괄적으로 커 보이던 차이가 대부분 사라졌다. 특히 045의 원본과 30·50세는 눈과 헤어라인 위치가 비슷했다. 반면 047의 30·50세 구분은 여전히 약했다. 포토부스에서 먼저 시험할 값은 `0.70`이며 첫 칸도 실제 정사각형 입력을 쓰는 방식이다. 앱 기본값은 변경하지 않았다.
 
-[0.70 네 컷](outputs/fading-self-20261124/matched/booth-070.png) · 같은 구도의 전체 비교판 [039](outputs/fading-self-20261124/matched/039.png) / [045](outputs/fading-self-20261124/matched/045.png) / [047](outputs/fading-self-20261124/matched/047.png) · [비교판 생성 코드](outputs/fading-self-20261124/render_matched.py)
+[0.70 네 컷](../outputs/fading-self-20261124/matched/booth-070.png) · 같은 구도의 전체 비교판 [039](../outputs/fading-self-20261124/matched/039.png) / [045](../outputs/fading-self-20261124/matched/045.png) / [047](../outputs/fading-self-20261124/matched/047.png) · [비교판 생성 코드](../outputs/fading-self-20261124/render_matched.py)
 
 ## 후속 실험에서 확인할 점 (미실행)
 
