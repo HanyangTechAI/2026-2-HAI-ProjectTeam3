@@ -3,6 +3,7 @@
 # 기존 원본 인쇄 기능은 그대로 보존.
 import io
 import re
+import sys
 import time
 import uuid
 import socket
@@ -47,7 +48,9 @@ QR_DIR = BASE_DIR / "qr"
 for d in (CAPTURE_DIR, RESULT_DIR, QR_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-camera = cv2.VideoCapture(0)
+# 윈도우 노트북에서 테스트할 땐 DirectShow가 해상도 전환에 더 안정적. 라즈베리파이는 기본값.
+camera = (cv2.VideoCapture(0, cv2.CAP_DSHOW) if sys.platform.startswith("win")
+          else cv2.VideoCapture(0))
 camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 camera_lock = threading.Lock()
@@ -256,15 +259,30 @@ def generate_frames():
                b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n")
 
 
+def _grab(tries):
+    """여러 장 읽어서 마지막으로 성공한 프레임을 돌려준다. 해상도 변경 직후 빈 프레임 대비."""
+    frame = None
+    for _ in range(tries):
+        success, f = read_camera_frame()
+        if success and f is not None:
+            frame = f
+        else:
+            time.sleep(0.05)
+    return frame
+
+
 def capture_frame():
     with camera_lock:
         try:
             camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
             camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-            frame, success = None, False
-            for _ in range(5):
-                success, frame = read_camera_frame()
-            if not success or frame is None:
+            frame = _grab(20)
+            if frame is None:
+                # 고해상도를 지원하지 않는 웹캠이면 미리보기 해상도로 다시 촬영
+                camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                frame = _grab(10)
+            if frame is None:
                 raise RuntimeError("Camera capture failed")
             return frame
         finally:
