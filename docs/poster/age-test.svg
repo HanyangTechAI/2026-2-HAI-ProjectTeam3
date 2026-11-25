@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="480" viewBox="0 0 1200 480" role="img" aria-labelledby="title desc">
+  <title id="title">나이 추정기의 고정 시험 결과</title>
+  <desc id="desc">AFAD와 MegaAge-Asian 사진 20,223장, 평균 절대오차 3.33세, 라벨과 5세 이내인 비율 78.35%. 생성 품질을 평가한 값이 아니다.</desc>
+  <rect width="1200" height="480" fill="white"/>
+  <g font-family="NanumGothic, Malgun Gothic, sans-serif" fill="#17334a">
+    <text x="50" y="55" font-size="22" fill="#12635d">나이 추정  /  고정 시험셋</text>
+    <text x="50" y="118" font-size="42" font-weight="bold">촬영 사진에서 나이를 얼마나 가깝게 추정했나?</text>
+    <path d="M50 148H1150M50 325H1150" stroke="#a9bec6" stroke-width="2"/>
+    <g font-size="58" font-weight="bold"><text x="50" y="246">20,223장</text><text x="460" y="246">3.33세</text><text x="848" y="246">78.35%</text></g>
+    <g font-size="22"><text x="50" y="291">시험 사진 수</text><text x="460" y="291">평균 절대오차 (MAE)</text><text x="848" y="291">라벨과 ±5세 이내</text></g>
+    <g font-size="21"><text x="50" y="373">MobileNetV3-Large · AFAD 16,482장 + MegaAge-Asian 3,741장 · 좌우 반전 평균 없음</text>
+    <text x="50" y="415">고령층 표본이 적고 인물 단위 분리는 보장되지 않는다. MegaAge 라벨은 추정 나이다.</text></g>
+    <text x="50" y="454" font-size="18" fill="#526574">출처: outputs/eval/public_initial_20261114/model_metrics.csv  ·  연령 편집 이미지의 정확도를 뜻하지 않는다.</text>
+  </g>
+</svg>
