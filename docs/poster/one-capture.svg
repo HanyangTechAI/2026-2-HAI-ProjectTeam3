@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="530" viewBox="0 0 1200 530" role="img" aria-labelledby="title desc">
+  <title id="title">한 번의 촬영에서 종이와 휴대폰으로</title>
+  <desc id="desc">부스 시스템 구성도. 태블릿과 라즈베리파이에서 사진 한 장을 촬영하고 GPU 서버에서 과거 편집본·현재 원본·두 미래 편집본을 만든다. 태블릿, 흑백 영수증, 휴대폰에 같은 작업의 결과를 전달하도록 설계했다. 실측 결과 사진이 아니다.</desc>
+  <rect width="1200" height="530" fill="white"/>
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M1 1L9 5L1 9" fill="none" stroke="#12635d"/></marker></defs>
+  <g font-family="NanumGothic, Malgun Gothic, sans-serif" fill="#17334a">
+    <text x="50" y="52" font-size="22" fill="#12635d">AI 타임머신 포토부스  /  시스템 구성도</text>
+    <text x="50" y="116" font-size="44" font-weight="bold">한 번 촬영하고, 같은 네 컷을 두 방식으로 받는다</text>
+    <g fill="#f4f9f8" stroke="#b5cfc9" stroke-width="2"><rect x="50" y="175" width="240" height="210" rx="12"/><rect x="350" y="175" width="375" height="210" rx="12"/><rect x="785" y="175" width="365" height="210" rx="12"/></g>
+    <g stroke="#12635d" stroke-width="3" marker-end="url(#arrow)"><path d="M295 280H340"/><path d="M730 280H775"/></g>
+    <g font-size="20" fill="#12635d"><text x="75" y="218">01  촬영</text><text x="375" y="218">02  추정과 편집</text><text x="810" y="218">03  표시와 수령</text></g>
+    <g font-size="26" font-weight="bold"><text x="75" y="273">태블릿 + Pi</text><text x="375" y="273">GPU 서버</text><text x="810" y="273">완료된 작업 한 건</text></g>
+    <g font-size="22"><text x="75" y="321">웹캠 사진 한 장</text><text x="375" y="321">과거 · 현재 원본 · 두 미래</text><text x="375" y="357">세 장을 편집해 네 컷 합성</text><text x="810" y="321">흑백 영수증: 네 컷 + QR</text><text x="810" y="357">휴대폰: 같은 컬러 PNG</text></g>
+    <text x="50" y="450" font-size="25">목표 나이는 이미지 편집 조건이다. 개인의 실제 과거·미래 얼굴을 예측하지 않는다.</text>
+    <text x="50" y="498" font-size="19" fill="#526574">구성도는 현장 성공 기록이 아니다. 실물 영수증, 휴대폰 수령 사진 및 소요 시간은 별도 현장 실측으로 제시한다.</text>
+  </g>
+</svg>

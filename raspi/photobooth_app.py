@@ -2,6 +2,7 @@
 # 촬영 → FADING 4컷 생성(백그라운드) → 상태 폴링 → 결과+QR 표시.
 # 기존 원본 인쇄 기능은 그대로 보존.
 import io
+import os
 import re
 import sys
 import time
@@ -28,6 +29,7 @@ app = Flask(__name__)
 FADING_API_URL = "http://127.0.0.1:18000/api/fading/fourcut"
 API_TIMEOUT = 300          # FADING 1회 ~100초. 여유있게 5분.
 WEB_PORT = 5000
+QR_BOX_SIZE = 10
 # QR이 가리킬 주소(핸드폰이 접속). 라즈베리파이 LAN IP 자동 감지, 필요시 직접 지정.
 def _lan_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -38,7 +40,7 @@ def _lan_ip():
         return "127.0.0.1"
     finally:
         s.close()
-PUBLIC_HOST = _lan_ip()
+PUBLIC_HOST = os.environ.get("PUBLIC_HOST") or _lan_ip()
 # ================================================================
 
 BASE_DIR = Path.home() / "Pictures/ai_booth"
@@ -55,6 +57,7 @@ camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 camera_lock = threading.Lock()
 capture_busy = threading.Lock()   # 중복 촬영 방지
+printer_busy = threading.Lock()
 
 # 진행 중/완료된 작업 상태 저장소
 jobs = {}
@@ -136,7 +139,7 @@ HTML_TEMPLATE = """
   <section id="processing" class="hidden">
     <div class="spin"></div>
     <div style="font-weight:700;font-size:18px;">시간 여행 중이에요…</div>
-    <div class="sub">과거와 미래의 얼굴을 그리고 있어요. 1~2분 걸려요.</div>
+    <div class="sub">10년 전 → 현재 → 10년 후 → 20년 후의 모습을 만들고 있어요. 편집 나이는 3~90세 범위이며 실제 과거나 미래를 보여 주지는 않아요.</div>
     <div class="elapsed" id="elapsed">00:00</div>
   </section>
 
@@ -149,7 +152,9 @@ HTML_TEMPLATE = """
     </div>
     <div class="sub">QR을 찍으면 고화질 사진을 받을 수 있어요.</div>
     <img id="qrImg" class="qr" alt="다운로드 QR">
-    <button class="primary" onclick="location.reload()">다시 하기</button>
+    <button id="printBtn" class="primary" disabled>4컷과 QR 인쇄하기</button>
+    <div id="printMsg" role="status"></div>
+    <button class="ghost" onclick="location.reload()">다시 하기</button>
   </section>
 
   <!-- 4) 실패 화면 -->
@@ -230,7 +235,14 @@ async function startTimeTravel() {
         clearInterval(poll); clearInterval(timer);
         document.getElementById("resultImg").src = "/result/" + jobId + "?t=" + Date.now();
         document.getElementById("qrImg").src = "/qr/" + jobId + "?t=" + Date.now();
-        if (s.age) document.getElementById("ageNote").textContent = "추정 나이 약 " + s.age + "세";
+        const printBtn = document.getElementById("printBtn");
+        if (!printBtn.onclick) {
+          printBtn.onclick = () => printResult(jobId, printBtn);
+          printBtn.disabled = false;
+        }
+        const [past, future10, future20] = s.target_ages;
+        document.getElementById("ageNote").textContent =
+          `${past}세 편집 → 현재 원본(약 ${s.initial_age}세) → ${future10}세 편집 → ${future20}세 편집`;
         show("done");
       } else if (s.status === "error") {
         clearInterval(poll); clearInterval(timer);
@@ -238,6 +250,23 @@ async function startTimeTravel() {
       }
     } catch (e) { /* 일시적 네트워크 오류는 무시하고 계속 폴링 */ }
   }, 2000);
+}
+
+async function printResult(jobId, button) {
+  if (button.disabled) return;
+  button.disabled = true;
+  const msg = document.getElementById("printMsg");
+  msg.textContent = "프린터로 보내는 중이에요…";
+  try {
+    const response = await fetch("/print_result/" + jobId, {method: "POST"});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error);
+    msg.textContent = "프린터로 보냈어요.";
+  } catch (e) {
+    msg.textContent = e.message || "인쇄 상태를 확인해 주세요.";
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function fail(message) {
@@ -335,15 +364,33 @@ def run_fading_job(job_id, image_path, gender):
                      error=detail or f"생성 실패 (코드 {resp.status_code})")
             return
 
-        # 4컷 PNG 저장
+        # A relay or login page may return HTML with status 200.
+        try:
+            with Image.open(io.BytesIO(resp.content)) as result_image:
+                if result_image.format != "PNG":
+                    raise ValueError("Expected PNG")
+                result_image.verify()
+        except (OSError, ValueError, SyntaxError):
+            _set_job(job_id, status="error", error="서버에서 온 네 컷 이미지를 읽지 못했어요. 다시 시도해 주세요.")
+            return
+        # Never label a legacy fixed-target response as a relative-age sheet.
+        try:
+            initial_age = int(resp.headers["X-Initial-Age"])
+            targets = [int(value) for value in resp.headers["X-Target-Ages"].split(",")]
+            if len(targets) != 3 or not all(3 <= age <= 90 for age in targets):
+                raise ValueError("Invalid targets")
+        except (KeyError, ValueError):
+            _set_job(job_id, status="error", error="결과의 편집 나이를 확인할 수 없어요. 서버 설정을 확인해 주세요.")
+            return
         (RESULT_DIR / f"{job_id}.png").write_bytes(resp.content)
 
         # 결과 다운로드 URL로 QR 생성 (핸드폰이 같은 네트워크에서 접속)
         url = f"http://{PUBLIC_HOST}:{WEB_PORT}/result/{job_id}?download=1"
-        qrcode.make(url).save(QR_DIR / f"{job_id}.png")
+        qrcode.make(url, box_size=QR_BOX_SIZE).save(QR_DIR / f"{job_id}.png")
 
         age = resp.headers.get("X-Estimated-Age", "")
-        _set_job(job_id, status="done", age=age, url=url)
+        _set_job(job_id, status="done", age=age, initial_age=initial_age, target_ages=targets,
+                 gpu_job_id=resp.headers.get("X-Job-Id", ""), url=url)
     except requests.Timeout:
         _set_job(job_id, status="error", error="생성 시간이 초과됐어요. 다시 시도해 주세요.")
     except requests.RequestException:
@@ -406,7 +453,9 @@ def status(job_id):
     if not job:
         abort(404)
     return jsonify(status=job.get("status", "processing"),
-                   age=job.get("age", ""), error=job.get("error", ""))
+                   age=job.get("age", ""), initial_age=job.get("initial_age"),
+                   target_ages=job.get("target_ages", []), gpu_job_id=job.get("gpu_job_id", ""),
+                   error=job.get("error", ""))
 
 
 @app.route("/result/<job_id>")
@@ -432,7 +481,7 @@ def wake_up_and_clear_printer(ser):
     ser.write(b"\x1b\x3d\x01"); time.sleep(0.1)
 
 
-def process_and_print_image(pil_img, caption=""):
+def process_and_print_image(pil_img, caption="", qr_img=None):
     PRINTER_WIDTH = 384
     aspect = pil_img.height / pil_img.width
     img = pil_img.resize((PRINTER_WIDTH, int(PRINTER_WIDTH * aspect)), Image.Resampling.LANCZOS)
@@ -446,7 +495,15 @@ def process_and_print_image(pil_img, caption=""):
         font = ImageFont.load_default()
     header_h = 45
     footer_h = 55 if caption else 35
-    final_img = Image.new("1", (PRINTER_WIDTH, header_h + img.height + footer_h), 1)
+    # Scale the saved QR in whole printer dots per module, including its quiet zone.
+    if qr_img is not None:
+        modules = qr_img.width // QR_BOX_SIZE
+        if not 0 < modules <= PRINTER_WIDTH or qr_img.size != (modules * QR_BOX_SIZE,) * 2:
+            raise ValueError("Unexpected saved QR dimensions")
+        size = modules * (PRINTER_WIDTH // modules)
+        qr_img = qr_img.convert("1").resize((size, size), Image.Resampling.NEAREST)
+    final_img = Image.new("1", (PRINTER_WIDTH, header_h + img.height + footer_h +
+                                (qr_img.height if qr_img is not None else 0)), 1)
     draw = ImageDraw.Draw(final_img)
     draw.text((20, 12), "AI TIME MACHINE PHOTO", fill=0, font=font)
     draw.line([(0, header_h - 5), (PRINTER_WIDTH, header_h - 5)], fill=0, width=2)
@@ -455,25 +512,46 @@ def process_and_print_image(pil_img, caption=""):
     draw.line([(0, footer_top + 5), (PRINTER_WIDTH, footer_top + 5)], fill=0, width=2)
     if caption:
         draw.text((20, footer_top + 15), caption, fill=0, font=font)
+    if qr_img is not None:
+        final_img.paste(qr_img, ((PRINTER_WIDTH - qr_img.width) // 2, footer_top + footer_h))
 
     byte_w = PRINTER_WIDTH // 8
     header = bytearray([0x1D, 0x76, 0x30, 0x00, byte_w & 0xFF, (byte_w >> 8) & 0xFF,
                         final_img.height & 0xFF, (final_img.height >> 8) & 0xFF])
-    bitmap = bytearray()
-    for py in range(final_img.height):
-        for bx in range(byte_w):
-            val = 0
-            for bit in range(8):
-                px = bx * 8 + bit
-                if px < PRINTER_WIDTH and final_img.getpixel((px, py)) == 0:
-                    val |= (1 << (7 - bit))
-            bitmap.append(val)
-    ser = serial.Serial("/dev/ttyACM0", 115200, timeout=2)
-    wake_up_and_clear_printer(ser)
-    payload = header + bitmap
-    for i in range(0, len(payload), 1024):
-        ser.write(payload[i:i+1024]); time.sleep(0.01)
-    ser.write(b"\n\n\n\n"); ser.flush(); ser.close()
+    # ESC/POS uses a set bit for black; Pillow mode 1 uses it for white.
+    payload = header + final_img.tobytes("raw", "1;I")
+    with serial.Serial("/dev/ttyACM0", 115200, timeout=2, write_timeout=5) as ser:
+        wake_up_and_clear_printer(ser)
+        for i in range(0, len(payload), 1024):
+            ser.write(payload[i:i+1024]); time.sleep(0.01)
+        ser.write(b"\n\n\n\n"); ser.flush()
+
+
+@app.post("/print_result/<job_id>")
+def print_result(job_id):
+    with jobs_lock:
+        state = jobs.get(job_id, {}).get("status") if ID_RE.fullmatch(job_id) else None
+    if state is None:
+        return jsonify(error="작업을 찾을 수 없어요."), 404
+    if state != "done":
+        return jsonify(error="완료된 결과만 인쇄할 수 있어요."), 409
+    if not printer_busy.acquire(blocking=False):
+        return jsonify(error="프린터 사용 중이에요. 잠시 후 다시 시도해 주세요."), 409
+    try:
+        try:
+            with Image.open(RESULT_DIR / f"{job_id}.png") as image:
+                photo = image.copy()
+            with Image.open(QR_DIR / f"{job_id}.png") as image:
+                qr = image.copy()
+        except FileNotFoundError:
+            return jsonify(error="저장된 결과 또는 QR이 없어요."), 404
+        process_and_print_image(photo, qr_img=qr)
+        return jsonify(job_id=job_id)
+    except Exception:
+        app.logger.exception("Result printing failed for %s", job_id)
+        return jsonify(error="인쇄에 실패했어요. 저장된 결과와 프린터를 확인해 주세요."), 500
+    finally:
+        printer_busy.release()
 
 
 @app.route("/capture_and_print", methods=["POST"])
@@ -482,10 +560,15 @@ def capture_and_print():
         return render_template_string(
             HTML_TEMPLATE, status="다른 촬영이 진행 중이에요. 잠시 후 다시 시도해 주세요."), 409
     try:
-        caption = request.form.get("caption", "").strip()
-        frame = capture_frame()
-        pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-        process_and_print_image(pil_img, caption)
+        if not printer_busy.acquire(blocking=False):
+            return render_template_string(HTML_TEMPLATE, status="프린터 사용 중이에요."), 409
+        try:
+            caption = request.form.get("caption", "").strip()
+            frame = capture_frame()
+            pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            process_and_print_image(pil_img, caption)
+        finally:
+            printer_busy.release()
         status = "촬영 및 인쇄 성공!"
     except Exception:
         app.logger.exception("Capture or printing failed")

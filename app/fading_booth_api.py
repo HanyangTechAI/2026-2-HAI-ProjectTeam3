@@ -2,7 +2,7 @@
 import io
 import json
 import logging
-import re
+from dataclasses import asdict
 import shutil
 import subprocess
 import sys
@@ -16,15 +16,15 @@ from fastapi.responses import FileResponse
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from app.age_service import RealAgeEstimator
+from age.common import booth_slots
+from scripts.fading_fourcut import SETTINGS
 
 PROJECT = Path(__file__).resolve().parents[1]
 ROOT = Path.home() / ".cache/booth-auto"
-FADING_RESULTS = Path.home() / ".cache/fading-results"
 ROOT.mkdir(parents=True, exist_ok=True)
 
 MAX_BYTES = 10 * 1024 * 1024
 MAX_PIXELS = 20_000_000
-TARGETS = [10, 30, 50]
 
 app = FastAPI(title="FADING Photobooth", docs_url=None, redoc_url=None)
 busy = Lock()
@@ -41,7 +41,9 @@ def health():
         "status": "ok",
         "service": "photobooth-fading",
         "real_age_model": True,
-        "targets": TARGETS,
+        "target_offsets": [-10, 10, 20],
+        "target_range": [3, 90],
+        "generation_settings": SETTINGS,
     }
 
 
@@ -83,6 +85,7 @@ def make_fourcut(
         try:
             result = estimator(image)
             predicted_age = float(result["age"])
+            slots = booth_slots(predicted_age)
         except Exception:
             logger.exception("Age estimation failed")
             raise HTTPException(
@@ -90,9 +93,10 @@ def make_fourcut(
                 "얼굴 한 명이 선명하게 나오도록 다시 촬영해 주세요.",
             )
 
-        initial_age = max(1, min(100, int(predicted_age + 0.5)))
+        initial_age = slots[1].age
+        targets = [slot.age for slot in slots if slot.key != 'current']
 
-        folder.mkdir(exist_ok=False)
+        folder.mkdir(mode=0o700, exist_ok=False)
         source = folder / "input.jpg"
         image.save(source, quality=95)
         log_path = folder / "generation.log"
@@ -105,12 +109,12 @@ def make_fourcut(
 
         command = [
             sys.executable,
-            str(PROJECT / "scripts/fading_infer.py"),
+            "-m", "scripts.fading_fourcut",
             "--image", str(source),
             "--age", str(initial_age),
             "--gender", gender,
-            "--targets", *map(str, TARGETS),
-            "--self-replace", "0.9",
+            "--targets", *map(str, targets),
+            "--output", str(folder / 'frames'),
         ]
 
         with log_path.open("w", encoding="utf-8") as log:
@@ -123,28 +127,10 @@ def make_fourcut(
                 timeout=600,
             )
 
-        log_text = log_path.read_text(encoding="utf-8", errors="replace")
-        match = re.search(r"^Results: (.+)$", log_text, re.MULTILINE)
-        if match is None:
-            raise RuntimeError("FADING output directory not reported")
-
-        generated = Path(match.group(1).strip()).resolve()
-        if not generated.is_relative_to(FADING_RESULTS.resolve()):
-            raise RuntimeError("Unexpected output directory")
-
-        sys.path.insert(0, str(Path.home() / ".cache/fading-src"))
-        from null_inversion import load_512
-
-        tiles = [
-            ("Original", Image.fromarray(load_512(str(source))))
-        ]
-        for age in TARGETS:
-            with Image.open(generated / f"input_{age}.png") as frame:
-                tiles.append((
-                    f"Target age {age}",
-                    frame.convert("RGB").copy(),
-                ))
-
+        generated = folder / 'frames'
+        settings = json.loads((generated / 'settings.json').read_text())
+        if settings != dict(**SETTINGS, targets=targets, initial_age=initial_age, gender=gender):
+            raise RuntimeError('Generation settings did not match the requested timeline')
         cell, header = 512, 44
         sheet = Image.new(
             "RGB", (cell * 2, (cell + header) * 2), "white"
@@ -155,15 +141,16 @@ def make_fourcut(
         except OSError:
             font = ImageFont.load_default()
 
-        for index, (label, frame) in enumerate(tiles):
+        for index, slot in enumerate(slots):
             x = (index % 2) * cell
             y = (index // 2) * (cell + header)
             draw.text(
-                (x + 14, y + 10), label, fill="black", font=font
+                (x + 14, y + 10), slot.label, fill="black", font=font
             )
-            sheet.paste(
-                frame.resize((cell, cell)), (x, y + header)
-            )
+            with Image.open(generated / slot.filename) as frame:
+                if frame.size != (cell, cell) or frame.mode != 'RGB' or frame.format != 'PNG':
+                    raise RuntimeError(f'Unexpected frame format: {slot.key}')
+                sheet.paste(frame, (x, y + header))
 
         output = folder / "fourcut.png"
         sheet.save(output)
@@ -175,8 +162,10 @@ def make_fourcut(
             "initial_age": initial_age,
             "age_source": "real_model",
             "gender_condition": gender,
-            "targets": TARGETS,
-            "self_replace_steps": 0.9,
+            "targets": targets,
+            "slots": [asdict(slot) for slot in slots],
+            "generation_settings": settings,
+            "command": command,
             "total_seconds": seconds,
             "generation_is_mock": False,
         }
@@ -194,6 +183,8 @@ def make_fourcut(
             headers={
                 "Cache-Control": "no-store",
                 "X-Estimated-Age": f"{predicted_age:.1f}",
+                "X-Initial-Age": str(initial_age),
+                "X-Target-Ages": ','.join(map(str, targets)),
                 "X-Processing-Seconds": f"{seconds:.1f}",
                 "X-Job-Id": job_id,
             },
