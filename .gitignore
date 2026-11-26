@@ -3,6 +3,10 @@ venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+.baze-files/
+.booth_relative_backup_*/
+app.py.before_*
+*.relative-tmp
 # Dataset images, labels, split manifests and reports stay outside Git.
 /data/*
 !/data/README.md
